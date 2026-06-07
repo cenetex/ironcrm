@@ -11,9 +11,9 @@ pub async fn connect(database_url: &str) -> Result<MySqlPool> {
 
 /// Discover SuiteCRM modules by inspecting the database schema.
 pub async fn discover_modules(pool: &MySqlPool) -> Result<Vec<String>> {
-    let rows: Vec<(String,)> = sqlx::query_as(
+    let rows = sqlx::query(
         r#"
-        SELECT TABLE_NAME
+        SELECT CAST(TABLE_NAME AS CHAR) as table_name
         FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_TYPE = 'BASE TABLE'
@@ -42,7 +42,7 @@ pub async fn discover_modules(pool: &MySqlPool) -> Result<Vec<String>> {
     .fetch_all(pool)
     .await?;
 
-    Ok(rows.into_iter().map(|(name,)| name).collect())
+    Ok(rows.into_iter().map(|r| r.get::<String, _>("table_name")).collect())
 }
 
 /// Query any module table, merging custom fields from its `_cstm` table if it exists.
