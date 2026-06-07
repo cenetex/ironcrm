@@ -2,6 +2,7 @@ use anyhow::Result;
 use axum::{routing::get, Router};
 use sqlx::sqlite::SqlitePoolOptions;
 use tower_http::cors::CorsLayer;
+use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
 pub mod api;
@@ -34,6 +35,7 @@ pub async fn run_server(db_path: &str, port: u16) -> Result<()> {
         .route("/api/v1/modules", get(api::list_modules))
         .route("/api/v1/{module}", get(api::list_records))
         .route("/api/v1/{module}/{id}", get(api::get_record))
+        .fallback_service(ServeDir::new("/Users/ratimics/develop/ironcrm/frontend"))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(pool);
