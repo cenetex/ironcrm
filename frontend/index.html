@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IronCRM</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <nav id="sidebar">
+      <div class="logo">Iron<span>CRM</span></div>
+      <div id="module-list"></div>
+      <div class="sidebar-footer">
+        <span id="db-status">● local</span>
+      </div>
+    </nav>
+    <main id="content">
+      <div id="toolbar">
+        <h2 id="view-title">Dashboard</h2>
+        <div id="search-bar">
+          <input type="text" id="search-input" placeholder="Search..." disabled>
+        </div>
+      </div>
+      <div id="data-area">
+        <div id="loading" class="hidden">Loading...</div>
+        <table id="data-table" class="hidden">
+          <thead id="table-head"></thead>
+          <tbody id="table-body"></tbody>
+        </table>
+        <div id="empty-state">
+          <div class="empty-icon">⚡</div>
+          <p>Select a module from the sidebar</p>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -1,2 +1,3 @@
 /target
 ironcrm.db
+src-tauri/target/

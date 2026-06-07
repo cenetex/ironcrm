@@ -1,0 +1,129 @@
+:root {
+  --bg: #0f1117;
+  --bg-surface: #1a1d27;
+  --bg-hover: #242836;
+  --border: #2a2e3a;
+  --text: #e1e4ed;
+  --text-muted: #6b7280;
+  --primary: #6366f1;
+  --primary-hover: #818cf8;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --radius: 6px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+}
+
+#app { display: flex; height: 100vh; }
+
+/* ── Sidebar ── */
+#sidebar {
+  width: 220px;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+.logo {
+  padding: 18px 20px;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  border-bottom: 1px solid var(--border);
+}
+.logo span { color: var(--primary); font-weight: 400; }
+
+#module-list { flex: 1; overflow-y: auto; padding: 8px; }
+.module-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; border-radius: var(--radius);
+  font-size: 13px; color: var(--text-muted); cursor: pointer;
+  transition: all 0.15s; text-transform: capitalize;
+}
+.module-item:hover { background: var(--bg-hover); color: var(--text); }
+.module-item.active { background: var(--primary); color: #fff; }
+.module-item .count { margin-left: auto; font-size: 11px; opacity: 0.6; }
+
+.sidebar-footer {
+  padding: 12px 20px; border-top: 1px solid var(--border);
+  font-size: 11px; color: var(--text-muted);
+}
+#db-status { color: var(--success); }
+
+/* ── Main ── */
+#content { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+#toolbar {
+  padding: 16px 24px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 16px;
+}
+#view-title { font-size: 16px; font-weight: 600; }
+#search-bar { margin-left: auto; }
+#search-input {
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 6px 12px; color: var(--text);
+  font-size: 13px; width: 200px; outline: none;
+}
+#search-input:focus { border-color: var(--primary); }
+
+/* ── Table ── */
+#data-area { flex: 1; overflow: auto; padding: 0; }
+#data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+#data-table th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--bg-surface); color: var(--text-muted);
+  font-weight: 600; text-align: left; padding: 10px 16px;
+  border-bottom: 1px solid var(--border); text-transform: capitalize;
+  white-space: nowrap;
+}
+#data-table td {
+  padding: 8px 16px; border-bottom: 1px solid var(--border);
+  max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#data-table tr:hover td { background: var(--bg-hover); }
+
+/* ── Empty state ── */
+#empty-state {
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; height: 100%; color: var(--text-muted);
+}
+.empty-icon { font-size: 48px; margin-bottom: 12px; opacity: 0.3; }
+
+/* ── Detail overlay ── */
+#detail-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100;
+}
+#detail-panel {
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: calc(var(--radius) * 2); width: 640px; max-height: 80vh;
+  overflow-y: auto; padding: 24px;
+}
+#detail-panel h3 { font-size: 18px; margin-bottom: 16px; }
+.detail-field { margin-bottom: 8px; display: flex; }
+.detail-field .label { color: var(--text-muted); width: 140px; flex-shrink: 0; font-size: 12px; }
+.detail-field .value { font-size: 13px; }
+.related-section { margin-top: 20px; }
+.related-section h4 { font-size: 14px; color: var(--text-muted); margin-bottom: 8px; }
+.related-item {
+  padding: 8px 12px; background: var(--bg); border-radius: var(--radius);
+  margin-bottom: 4px; font-size: 13px; cursor: pointer;
+}
+.related-item:hover { background: var(--bg-hover); }
+.close-btn {
+  position: absolute; top: 16px; right: 16px;
+  background: none; border: none; color: var(--text-muted);
+  font-size: 20px; cursor: pointer;
+}
+#detail-panel { position: relative; }
+
+.hidden { display: none !important; }
