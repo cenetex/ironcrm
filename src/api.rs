@@ -5,7 +5,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use sqlx::mysql::MySqlPool;
+use sqlx::sqlite::SqlitePool;
 
 // ── Types ──
 
@@ -57,8 +57,8 @@ pub async fn health() -> Json<HealthResponse> {
     })
 }
 
-pub async fn list_modules(State(pool): State<MySqlPool>) -> Json<ModuleListResponse> {
-    let modules = crate::db::discover_modules(&pool)
+pub async fn list_modules(State(pool): State<SqlitePool>) -> Json<ModuleListResponse> {
+    let modules = crate::db::discover_modules_sqlite(&pool)
         .await
         .unwrap_or_default();
     let count = modules.len();
@@ -66,14 +66,14 @@ pub async fn list_modules(State(pool): State<MySqlPool>) -> Json<ModuleListRespo
 }
 
 pub async fn list_records(
-    State(pool): State<MySqlPool>,
+    State(pool): State<SqlitePool>,
     Path(module): Path<String>,
     Query(pagination): Query<Pagination>,
 ) -> Result<Json<ModuleRecordsResponse>, (StatusCode, Json<ErrorResponse>)> {
     let limit = pagination.limit.unwrap_or(25).min(100);
     let offset = pagination.offset.unwrap_or(0);
 
-    let modules = crate::db::discover_modules(&pool).await.unwrap_or_default();
+    let modules = crate::db::discover_modules_sqlite(&pool).await.unwrap_or_default();
     if !modules.contains(&module) {
         return Err((
             StatusCode::NOT_FOUND,
@@ -106,10 +106,10 @@ pub async fn list_records(
 }
 
 pub async fn get_record(
-    State(pool): State<MySqlPool>,
+    State(pool): State<SqlitePool>,
     Path((module, id)): Path<(String, String)>,
 ) -> Result<Json<ModuleRecordResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let modules = crate::db::discover_modules(&pool).await.unwrap_or_default();
+    let modules = crate::db::discover_modules_sqlite(&pool).await.unwrap_or_default();
     if !modules.contains(&module) {
         return Err((
             StatusCode::NOT_FOUND,

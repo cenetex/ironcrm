@@ -9,7 +9,7 @@ description = "Rust-native CRM engine, compatible with SuiteCRM databases"
 tokio = { version = "1", features = ["full"] }
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio", "mysql", "migrate"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "mysql", "sqlite", "migrate"] }
 
 # HTTP server
 axum = "0.8"
@@ -28,9 +28,11 @@ thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# SQLite (bundled)
+libsqlite3-sys = { version = "0.30", features = ["bundled"] }
+
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 
 [dev-dependencies]
-sqlx = { version = "0.8", features = ["runtime-tokio", "mysql", "migrate", "sqlite"] }

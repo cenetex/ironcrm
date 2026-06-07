@@ -774,6 +774,7 @@ dependencies = [
  "anyhow",
  "axum",
  "chrono",
+ "libsqlite3-sys",
  "serde",
  "serde_json",
  "sqlx",

@@ -1,16 +1,176 @@
 use anyhow::{Context, Result};
+
+/// SuiteCRM convention: table names are plural, FK columns are singular.
+fn singularize(table: &str) -> &str {
+    if table.ends_with("ies") {
+        // opportunities -> opportunity
+        table.strip_suffix("ies").unwrap()
+    } else if table.ends_with("ses") {
+        // cases -> case  
+        table.strip_suffix("es").unwrap()
+    } else if table.ends_with('s') && !table.ends_with("ss") {
+        // accounts -> account, contacts -> contact
+        &table[..table.len()-1]
+    } else {
+        table
+    }
+}
 use serde_json::{Map, Value};
 use sqlx::mysql::MySqlPool;
-use sqlx::{Column, Row, TypeInfo};
+use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
+use sqlx::{Column, Row};
 
-/// Create a connection pool to the MySQL database.
-pub async fn connect(database_url: &str) -> Result<MySqlPool> {
+// ── SQLite connection ──
+
+pub async fn connect_sqlite(path: &str) -> Result<SqlitePool> {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect(&format!("sqlite:{}", path))
+        .await?;
+
+    // Create the records table if it doesn't exist
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS records (
+            module TEXT NOT NULL,
+            id TEXT NOT NULL,
+            data TEXT NOT NULL,
+            PRIMARY KEY (module, id)
+        )",
+    )
+    .execute(&pool)
+    .await?;
+
+    // Create index for module lookups
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_records_module ON records(module)",
+    )
+    .execute(&pool)
+    .await?;
+
+    Ok(pool)
+}
+
+// ── MySQL connection (import source only) ──
+
+pub async fn connect_mysql(database_url: &str) -> Result<MySqlPool> {
     let pool = MySqlPool::connect(database_url).await?;
     Ok(pool)
 }
 
-/// Discover SuiteCRM modules by inspecting the database schema.
-pub async fn discover_modules(pool: &MySqlPool) -> Result<Vec<String>> {
+// ── Import: MySQL → SQLite ──
+
+pub async fn import_from_mysql(source_url: &str, target_path: &str) -> Result<()> {
+    let mysql = connect_mysql(source_url).await?;
+    let sqlite = connect_sqlite(target_path).await?;
+
+    let modules = discover_modules_mysql(&mysql).await?;
+    tracing::info!("Importing {} modules...", modules.len());
+
+    for module in &modules {
+        import_module(&mysql, &sqlite, module).await?;
+    }
+
+    // Also import relationship metadata
+    import_relationships(&mysql, &sqlite).await?;
+
+    Ok(())
+}
+
+async fn import_module(mysql: &MySqlPool, sqlite: &SqlitePool, module: &str) -> Result<()> {
+    // Check if _cstm table exists
+    let cstm_exists = table_exists(mysql, &format!("{}_cstm", module)).await?;
+
+    let sql = if cstm_exists {
+        format!(
+            "SELECT b.*, c.* FROM `{}` b LEFT JOIN `{}_cstm` c ON b.id = c.id_c",
+            module, module
+        )
+    } else {
+        format!("SELECT * FROM `{}`", module)
+    };
+
+    let rows = sqlx::query(&sql).fetch_all(mysql).await?;
+    let mut count = 0u64;
+
+    for row in &rows {
+        let mut map = Map::new();
+        for col in row.columns() {
+            let name = col.name().to_string();
+            if name == "id_c" && cstm_exists {
+                continue;
+            }
+            let value: Value = row
+                .try_get::<Option<String>, _>(name.as_str())
+                .unwrap_or(None)
+                .map(Value::String)
+                .unwrap_or(Value::Null);
+            map.insert(name, value);
+        }
+
+        let id = map
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let json = serde_json::to_string(&map)?;
+
+        sqlx::query(
+            "INSERT OR REPLACE INTO records (module, id, data) VALUES (?, ?, ?)",
+        )
+        .bind(module)
+        .bind(&id)
+        .bind(&json)
+        .execute(sqlite)
+        .await?;
+
+        count += 1;
+    }
+
+    tracing::info!("  {}: {} records", module, count);
+    Ok(())
+}
+
+async fn import_relationships(mysql: &MySqlPool, sqlite: &SqlitePool) -> Result<()> {
+    let rows = sqlx::query(
+        "SELECT relationship_name, lhs_module, lhs_table, rhs_module, rhs_table
+         FROM relationships"
+    )
+    .fetch_all(mysql)
+    .await?;
+
+    for row in &rows {
+        let rel_name: String = row.get("relationship_name");
+        let lhs_module: String = row.get("lhs_module");
+        let lhs_table: String = row.get("lhs_table");
+        let rhs_module: String = row.get("rhs_module");
+        let rhs_table: String = row.get("rhs_table");
+
+        let mut map = Map::new();
+        map.insert("relationship_name".into(), Value::String(rel_name.clone()));
+        map.insert("lhs_module".into(), Value::String(lhs_module));
+        map.insert("lhs_table".into(), Value::String(lhs_table));
+        map.insert("rhs_module".into(), Value::String(rhs_module));
+        map.insert("rhs_table".into(), Value::String(rhs_table));
+
+        let json = serde_json::to_string(&map)?;
+        sqlx::query(
+            "INSERT OR REPLACE INTO records (module, id, data) VALUES (?, ?, ?)",
+        )
+        .bind("_relationships")
+        .bind(&rel_name)
+        .bind(&json)
+        .execute(sqlite)
+        .await?;
+    }
+
+    tracing::info!("  _relationships: {} definitions", rows.len());
+    Ok(())
+}
+
+// ── Module discovery ──
+
+pub async fn discover_modules_mysql(pool: &MySqlPool) -> Result<Vec<String>> {
     let rows = sqlx::query(
         r#"
         SELECT CAST(TABLE_NAME AS CHAR) as table_name
@@ -42,212 +202,135 @@ pub async fn discover_modules(pool: &MySqlPool) -> Result<Vec<String>> {
     .fetch_all(pool)
     .await?;
 
-    Ok(rows.into_iter().map(|r| r.get::<String, _>("table_name")).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| r.get::<String, _>("table_name"))
+        .collect())
 }
 
-/// Query any module table, merging custom fields from its `_cstm` table if it exists.
+pub async fn discover_modules_sqlite(pool: &SqlitePool) -> Result<Vec<String>> {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT DISTINCT module FROM records WHERE module != '_relationships' ORDER BY module",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows.into_iter().map(|(name,)| name).collect())
+}
+
+// ── SQLite queries ──
+
 pub async fn query_module(
-    pool: &MySqlPool,
+    pool: &SqlitePool,
     module: &str,
     limit: u32,
     offset: u32,
 ) -> Result<Vec<Map<String, Value>>> {
-    let cstm_exists = table_exists(pool, &format!("{}_cstm", module)).await?;
-
-    let sql = if cstm_exists {
-        format!(
-            "SELECT b.*, c.* \
-             FROM `{}` b \
-             LEFT JOIN `{}_cstm` c ON b.id = c.id_c \
-             WHERE b.deleted = 0 \
-             ORDER BY b.date_entered DESC \
-             LIMIT {} OFFSET {}",
-            module, module, limit, offset
-        )
-    } else {
-        format!(
-            "SELECT * FROM `{}` WHERE deleted = 0 \
-             ORDER BY date_entered DESC \
-             LIMIT {} OFFSET {}",
-            module, limit, offset
-        )
-    };
-
-    let rows = sqlx::query(&sql).fetch_all(pool).await?;
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT data FROM records WHERE module = ? ORDER BY id LIMIT ? OFFSET ?",
+    )
+    .bind(module)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
 
     let results: Vec<Map<String, Value>> = rows
-        .iter()
-        .map(|row| {
-            let mut map = Map::new();
-            for col in row.columns() {
-                let name = col.name().to_string();
-                let value: Value = match col.type_info().name() {
-                    "VARCHAR" | "TEXT" | "CHAR" | "ENUM" | "LONGTEXT" | "MEDIUMTEXT" => row
-                        .try_get::<Option<String>, _>(name.as_str())
-                        .unwrap_or(None)
-                        .map(Value::String)
-                        .unwrap_or(Value::Null),
-                    "INT" | "TINYINT" | "SMALLINT" | "MEDIUMINT" | "BIGINT" => {
-                        if col.type_info().name() == "TINYINT" && col.name().starts_with("deleted") {
-                            row.try_get::<Option<i8>, _>(name.as_str())
-                                .unwrap_or(None)
-                                .map(|v| Value::Bool(v != 0))
-                                .unwrap_or(Value::Null)
-                        } else {
-                            row.try_get::<Option<i64>, _>(name.as_str())
-                                .unwrap_or(None)
-                                .map(|v| Value::Number(v.into()))
-                                .unwrap_or(Value::Null)
-                        }
-                    }
-                    "FLOAT" | "DOUBLE" | "DECIMAL" => row
-                        .try_get::<Option<f64>, _>(name.as_str())
-                        .unwrap_or(None)
-                        .map(|v| {
-                            serde_json::Number::from_f64(v)
-                                .map(Value::Number)
-                                .unwrap_or(Value::Null)
-                        })
-                        .unwrap_or(Value::Null),
-                    "DATETIME" | "TIMESTAMP" => row
-                        .try_get::<Option<String>, _>(name.as_str())
-                        .unwrap_or(None)
-                        .map(Value::String)
-                        .unwrap_or(Value::Null),
-                    _ => Value::Null,
-                };
-                // Skip duplicate id_c column from _cstm join
-                if name != "id_c" || !cstm_exists {
-                    map.insert(name, value);
-                }
-            }
-            map
-        })
+        .into_iter()
+        .filter_map(|(json,)| serde_json::from_str(&json).ok())
         .collect();
 
     Ok(results)
 }
 
-/// Get a single record by ID.
-pub async fn get_module_record(pool: &MySqlPool, module: &str, id: &str) -> Result<Option<Map<String, Value>>> {
-    let cstm_exists = table_exists(pool, &format!("{}_cstm", module)).await?;
+pub async fn get_module_record(
+    pool: &SqlitePool,
+    module: &str,
+    id: &str,
+) -> Result<Option<Map<String, Value>>> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT data FROM records WHERE module = ? AND id = ?",
+    )
+    .bind(module)
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
 
-    let sql = if cstm_exists {
-        format!(
-            "SELECT b.*, c.* FROM `{}` b \
-             LEFT JOIN `{}_cstm` c ON b.id = c.id_c \
-             WHERE b.id = ?",
-            module, module
-        )
-    } else {
-        format!("SELECT * FROM `{}` WHERE id = ?", module)
-    };
-
-    let rows = sqlx::query(&sql).bind(id).fetch_all(pool).await?;
-
-    if rows.is_empty() {
-        return Ok(None);
-    }
-
-    let row = &rows[0];
-    let mut map = Map::new();
-    for col in row.columns() {
-        let name = col.name().to_string();
-        if name == "id_c" && cstm_exists {
-            continue;
-        }
-        let value: Value = row
-            .try_get::<Option<String>, _>(name.as_str())
-            .unwrap_or(None)
-            .map(Value::String)
-            .unwrap_or(Value::Null);
-        map.insert(name, value);
-    }
-
-    Ok(Some(map))
+    Ok(row.and_then(|(json,)| serde_json::from_str(&json).ok()))
 }
 
-/// Count non-deleted records in a module.
-pub async fn count_module(pool: &MySqlPool, module: &str) -> Result<i64> {
-    let sql = format!(
-        "SELECT COUNT(*) as cnt FROM `{}` WHERE deleted = 0",
-        module
-    );
-    let row = sqlx::query(&sql)
-        .fetch_one(pool)
-        .await
-        .with_context(|| format!("Failed to count module '{}'", module))?;
-    Ok(row.get::<i64, _>("cnt"))
+pub async fn count_module(pool: &SqlitePool, module: &str) -> Result<i64> {
+    let row: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) as cnt FROM records WHERE module = ?",
+    )
+    .bind(module)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(row.0)
 }
 
-/// List relationships for a module record.
 pub async fn get_relationships(
-    pool: &MySqlPool,
+    pool: &SqlitePool,
     module: &str,
     id: &str,
 ) -> Result<Vec<Map<String, Value>>> {
-    #[derive(sqlx::FromRow)]
-    struct RelationshipRow {
-        relationship_name: String,
-        lhs_module: String,
-        lhs_table: String,
-        lhs_key: String,
-        rhs_module: String,
-        rhs_table: String,
-        rhs_key: String,
-    }
-
-    let rows = sqlx::query_as::<_, RelationshipRow>(
-        r#"
-        SELECT
-            relationship_name,
-            lhs_module, lhs_table, lhs_key,
-            rhs_module, rhs_table, rhs_key
-        FROM relationships
-        WHERE lhs_module = ? OR rhs_module = ?
-        "#,
+    // Get relationship definitions for this module
+    let rel_rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT data FROM records WHERE module = '_relationships'",
     )
-    .bind(module)
-    .bind(module)
     .fetch_all(pool)
     .await?;
 
     let mut results = Vec::new();
-    for r in rows {
-        let rel_name = r.relationship_name;
-        let lhs_mod = r.lhs_module;
-        let lhs_tbl = r.lhs_table;
-        let lhs_key = r.lhs_key;
-        let _rhs_mod = r.rhs_module;
-        let rhs_tbl = r.rhs_table;
-        let rhs_key = r.rhs_key;
-        let (target_table, join_key, other_key) = if lhs_mod == module {
-            (&rhs_tbl, &rhs_key, &lhs_key)
-        } else {
-            (&lhs_tbl, &lhs_key, &rhs_key)
+
+    for (json,) in rel_rows {
+        let rel: Map<String, Value> = match serde_json::from_str(&json) {
+            Ok(r) => r,
+            Err(_) => continue,
         };
 
-        let sql = format!(
-            "SELECT t.* FROM `{}` t \
-             INNER JOIN `{}` r ON t.id = r.{} \
-             WHERE r.{} = ? AND t.deleted = 0 \
-             LIMIT 100",
-            target_table, rel_name, join_key, other_key
-        );
+        let rel_name = rel.get("relationship_name").and_then(|v| v.as_str()).unwrap_or("");
+        let lhs_module = rel.get("lhs_module").and_then(|v| v.as_str()).unwrap_or("");
+        let rhs_module = rel.get("rhs_module").and_then(|v| v.as_str()).unwrap_or("");
+        let lhs_table = rel.get("lhs_table").and_then(|v| v.as_str()).unwrap_or("");
+        let rhs_table = rel.get("rhs_table").and_then(|v| v.as_str()).unwrap_or("");
 
-        if let Ok(related_rows) = sqlx::query(&sql).bind(id).fetch_all(pool).await {
-            for row in related_rows {
-                let mut map = Map::new();
-                for col in row.columns() {
-                    let name = col.name().to_string();
-                    let value: Value = row
-                        .try_get::<Option<String>, _>(name.as_str())
-                        .unwrap_or(None)
-                        .map(Value::String)
-                        .unwrap_or(Value::Null);
-                    map.insert(name, value);
+        if !lhs_module.eq_ignore_ascii_case(module) && !rhs_module.eq_ignore_ascii_case(module) {
+            continue;
+        }
+
+        // Determine which side we are and the FK column names (singularized)
+        let (target_module, my_fk, their_fk) = if lhs_module.eq_ignore_ascii_case(module) {
+            (rhs_table, format!("{}_id", singularize(lhs_table)), format!("{}_id", singularize(rhs_table)))
+        } else {
+            (lhs_table, format!("{}_id", singularize(rhs_table)), format!("{}_id", singularize(lhs_table)))
+        };
+
+        // Step 1: Query the junction table for related record IDs
+        let jn_sql = format!(
+            "SELECT json_extract(data, '$.{}') as related_id FROM records WHERE module = '{}' AND json_extract(data, '$.{}') = '{}'",
+            their_fk, rel_name, my_fk, id
+        );
+        let jn_rows: Vec<(Option<String>,)> = sqlx::query_as(&jn_sql)
+            .fetch_all(pool)
+            .await?;
+
+        // Step 2: Look up each related record
+        for (related_id,) in jn_rows {
+            if let Some(rid) = related_id {
+                let rec_sql = format!(
+                    "SELECT data FROM records WHERE module = '{}' AND id = '{}'",
+                    target_module, rid
+                );
+                if let Ok(Some((rec_json,))) = sqlx::query_as::<_, (String,)>(&rec_sql)
+                    .fetch_optional(pool)
+                    .await
+                {
+                    if let Ok(record) = serde_json::from_str::<Map<String, Value>>(&rec_json) {
+                        results.push(record);
+                    }
                 }
-                results.push(map);
             }
         }
     }

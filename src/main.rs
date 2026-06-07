@@ -16,30 +16,48 @@ async fn main() -> Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let database_url = env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "mysql://suitecrm:suitecrm@localhost:3306/suitecrm".to_string());
+    let args: Vec<String> = env::args().collect();
 
-    tracing::info!("Connecting to database...");
-    let pool = db::connect(&database_url).await?;
+    match args.get(1).map(|s| s.as_str()) {
+        Some("import") => {
+            let source_url = env::var("SOURCE_DATABASE_URL")
+                .unwrap_or_else(|_| "mysql://suitecrm:suitecrm@localhost:3306/suitecrm".to_string());
+            let target_path = env::var("LOCAL_DB_PATH")
+                .unwrap_or_else(|_| "ironcrm.db".to_string());
 
-    tracing::info!("Discovering modules...");
-    let modules = db::discover_modules(&pool).await?;
-    tracing::info!("Found {} modules: {:?}", modules.len(), modules);
+            tracing::info!("Importing from {} -> {}", source_url, target_path);
+            db::import_from_mysql(&source_url, &target_path).await?;
+            tracing::info!("Import complete.");
+            return Ok(());
+        }
+        _ => {
+            // Serve mode
+            let db_path = env::var("LOCAL_DB_PATH")
+                .unwrap_or_else(|_| "ironcrm.db".to_string());
 
-    let app = Router::new()
-        .route("/health", get(api::health))
-        .route("/api/v1/modules", get(api::list_modules))
-        .route("/api/v1/{module}", get(api::list_records))
-        .route("/api/v1/{module}/{id}", get(api::get_record))
-        .layer(CorsLayer::permissive())
-        .layer(TraceLayer::new_for_http())
-        .with_state(pool);
+            tracing::info!("Opening local database: {}", db_path);
+            let pool = db::connect_sqlite(&db_path).await?;
 
-    let addr = "0.0.0.0:3000";
-    tracing::info!("IronCRM listening on {}", addr);
+            tracing::info!("Discovering modules...");
+            let modules = db::discover_modules_sqlite(&pool).await?;
+            tracing::info!("Found {} modules: {:?}", modules.len(), modules);
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+            let app = Router::new()
+                .route("/health", get(api::health))
+                .route("/api/v1/modules", get(api::list_modules))
+                .route("/api/v1/{module}", get(api::list_records))
+                .route("/api/v1/{module}/{id}", get(api::get_record))
+                .layer(CorsLayer::permissive())
+                .layer(TraceLayer::new_for_http())
+                .with_state(pool);
+
+            let addr = "0.0.0.0:3000";
+            tracing::info!("IronCRM listening on {}", addr);
+
+            let listener = tokio::net::TcpListener::bind(addr).await?;
+            axum::serve(listener, app).await?;
+        }
+    }
 
     Ok(())
 }
