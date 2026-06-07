@@ -1,0 +1,46 @@
+use chrono::NaiveDateTime;
+use serde::Serialize;
+use sqlx::FromRow;
+use uuid::Uuid;
+
+#[derive(Debug, Clone, Serialize, FromRow)]
+pub struct Lead {
+    pub id: Uuid,
+    pub date_entered: Option<NaiveDateTime>,
+    pub date_modified: Option<NaiveDateTime>,
+    pub modified_user_id: Option<Uuid>,
+    pub created_by: Option<Uuid>,
+    pub description: Option<String>,
+    pub deleted: Option<i8>,
+    pub assigned_user_id: Option<Uuid>,
+    pub salutation: Option<String>,
+    pub first_name: Option<String>,
+    pub last_name: Option<String>,
+    pub title: Option<String>,
+    pub department: Option<String>,
+    pub do_not_call: Option<i8>,
+    pub phone_home: Option<String>,
+    pub phone_mobile: Option<String>,
+    pub phone_work: Option<String>,
+    pub phone_other: Option<String>,
+    pub phone_fax: Option<String>,
+    pub email1: Option<String>,
+    pub email2: Option<String>,
+    pub primary_address_street: Option<String>,
+    pub primary_address_city: Option<String>,
+    pub primary_address_state: Option<String>,
+    pub primary_address_postalcode: Option<String>,
+    pub primary_address_country: Option<String>,
+    pub status: Option<String>,
+    pub status_description: Option<String>,
+    pub lead_source: Option<String>,
+    pub lead_source_description: Option<String>,
+    pub opportunity_name: Option<String>,
+    pub opportunity_amount: Option<String>,
+    pub account_name: Option<String>,
+    pub account_description: Option<String>,
+    pub campaign_id: Option<Uuid>,
+    pub converted: Option<i8>,
+    pub refered_by: Option<String>,
+    pub website: Option<String>,
+}
