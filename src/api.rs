@@ -149,3 +149,38 @@ pub async fn get_record(
         relationships,
     }))
 }
+
+use axum::extract::Multipart;
+use crate::vision::{scan_image, import_scan, ScanResult};
+
+pub async fn scan_image_endpoint(
+    State(pool): State<SqlitePool>,
+    mut multipart: Multipart,
+) -> Result<Json<ScanResult>, (StatusCode, Json<ErrorResponse>)> {
+    while let Some(field) = multipart.next_field().await.unwrap_or(None) {
+        if field.name() == Some("image") {
+            let data = field.bytes().await.map_err(|e| (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse { error: e.to_string() })
+            ))?;
+            let result = scan_image(&data).await.map_err(|e| (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse { error: e.to_string() })
+            ))?;
+            return Ok(Json(result));
+        }
+    }
+    Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "No image uploaded".into() })))
+}
+
+pub async fn import_scan_endpoint(
+    State(pool): State<SqlitePool>,
+    Path(module): Path<String>,
+    Json(data): Json<ScanResult>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let id = import_scan(&pool, &module, &data).await.map_err(|e| (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(ErrorResponse { error: e.to_string() })
+    ))?;
+    Ok(Json(serde_json::json!({"status": "ok", "id": id})))
+}
