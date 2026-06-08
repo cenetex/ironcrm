@@ -14,3 +14,4 @@ build/
 
 # Local environment files
 .env
+keys/

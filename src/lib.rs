@@ -1,4 +1,5 @@
 pub mod db;
+pub mod licensing;
 pub mod module;
 pub mod models;
 

@@ -39,6 +39,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # SQLite (bundled)
 libsqlite3-sys = { version = "0.30", features = ["bundled"] }
 
+# Licensing / crypto
+hex = "0.4"
+rand = "0.8"
+sha2 = "0.10"
+
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
 tempfile = { version = "3", optional = true }
