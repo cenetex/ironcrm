@@ -20,12 +20,19 @@ async fn main() -> Result<()> {
             tracing::info!("Importing from {} -> {}", source_url, target_path);
             ironcrm::db::import_from_mysql(&source_url, &target_path).await?;
             tracing::info!("Import complete.");
-            return Ok(());
         }
+        #[cfg(feature = "http-server")]
         _ => {
             let db_path = env::var("LOCAL_DB_PATH").unwrap_or_else(|_| "ironcrm.db".to_string());
             let port: u16 = env::var("PORT").unwrap_or_else(|_| "3000".to_string()).parse()?;
             ironcrm::run_server(&db_path, port).await?;
+        }
+        #[cfg(not(feature = "http-server"))]
+        _ => {
+            tracing::info!("IronCRM — local-first CRM engine");
+            tracing::info!("The desktop app runs via the Tauri shell (cd src-tauri && cargo run).");
+            tracing::info!("For the HTTP API plugin: cargo run --features http-server");
+            tracing::info!("For SuiteCRM import: cargo run -- import");
         }
     }
     Ok(())

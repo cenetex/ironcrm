@@ -1,24 +1,22 @@
-use chrono::NaiveDateTime;
-use serde::Serialize;
-use sqlx::FromRow;
-use uuid::Uuid;
+use crate::models::{ModuleSchema, ModuleDefinition, ScanMapping, field, field_default, field_scan, scan};
+use std::collections::HashMap;
 
-#[derive(Debug, Clone, Serialize, FromRow)]
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct Lead {
-    pub id: Uuid,
-    pub date_entered: Option<NaiveDateTime>,
-    pub date_modified: Option<NaiveDateTime>,
-    pub modified_user_id: Option<Uuid>,
-    pub created_by: Option<Uuid>,
+    pub id: Option<String>,
+    pub date_entered: Option<String>,
+    pub date_modified: Option<String>,
+    pub modified_user_id: Option<String>,
+    pub created_by: Option<String>,
     pub description: Option<String>,
-    pub deleted: Option<i8>,
-    pub assigned_user_id: Option<Uuid>,
+    pub deleted: Option<i64>,
+    pub assigned_user_id: Option<String>,
     pub salutation: Option<String>,
     pub first_name: Option<String>,
     pub last_name: Option<String>,
     pub title: Option<String>,
     pub department: Option<String>,
-    pub do_not_call: Option<i8>,
+    pub do_not_call: Option<i64>,
     pub phone_home: Option<String>,
     pub phone_mobile: Option<String>,
     pub phone_work: Option<String>,
@@ -39,8 +37,53 @@ pub struct Lead {
     pub opportunity_amount: Option<String>,
     pub account_name: Option<String>,
     pub account_description: Option<String>,
-    pub campaign_id: Option<Uuid>,
-    pub converted: Option<i8>,
+    pub campaign_id: Option<String>,
+    pub converted: Option<i64>,
     pub refered_by: Option<String>,
     pub website: Option<String>,
+}
+
+impl ModuleSchema for Lead {
+    fn definition() -> ModuleDefinition {
+        ModuleDefinition {
+            module: "leads".into(), label: "Lead".into(), label_plural: "Leads".into(),
+            icon: Some("L".into()), default_view: "board".into(),
+            board_field: Some("status".into()),
+            board_stages: Some(vec!["New","Assigned","In Process","Converted"].into_iter().map(String::from).collect()),
+            list_columns: vec!["full_name","account_name","status","lead_source","email1"].into_iter().map(String::from).collect(),
+            detail_summary: vec!["status","lead_source","account_name"].into_iter().map(String::from).collect(),
+            fields: vec![
+                field("id","TEXT",0),
+                field("date_entered","TEXT",1), field("date_modified","TEXT",2),
+                field("modified_user_id","TEXT",3), field("created_by","TEXT",4),
+                field("description","TEXT",5), field_default("deleted","INTEGER",6,"0"),
+                field("assigned_user_id","TEXT",7),
+                field("salutation","TEXT",8), field("first_name","TEXT",9),
+                field("last_name","TEXT",10), field_scan("title","TEXT",11,"title"),
+                field("department","TEXT",12), field_default("do_not_call","INTEGER",13,"0"),
+                field("phone_home","TEXT",14), field("phone_mobile","TEXT",15),
+                field_scan("phone_work","TEXT",16,"phone"), field("phone_other","TEXT",17),
+                field("phone_fax","TEXT",18), field_scan("email1","TEXT",19,"email"),
+                field("email2","TEXT",20),
+                field("primary_address_street","TEXT",21), field("primary_address_city","TEXT",22),
+                field("primary_address_state","TEXT",23), field("primary_address_postalcode","TEXT",24),
+                field("primary_address_country","TEXT",25),
+                field("status","TEXT",26), field("status_description","TEXT",27),
+                field("lead_source","TEXT",28), field("lead_source_description","TEXT",29),
+                field("opportunity_name","TEXT",30), field("opportunity_amount","TEXT",31),
+                field("account_name","TEXT",32), field("account_description","TEXT",33),
+                field("campaign_id","TEXT",34), field_default("converted","INTEGER",35,"0"),
+                field("refered_by","TEXT",36), field("website","TEXT",37),
+            ],
+            scan_mapping: Some(ScanMapping {
+                sources: HashMap::from([
+                    scan("title","title"), scan("phone","phone_work"),
+                    scan("email","email1"), scan("website","website"),
+                    scan("company","account_name"),
+                ]),
+                split_name: true,
+            }),
+            indexes: vec!["last_name,first_name".into(),"status".into(),"deleted".into()],
+        }
+    }
 }

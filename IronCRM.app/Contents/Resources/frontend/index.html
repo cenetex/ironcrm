@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>IronCRM</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <nav id="sidebar">
+      <div class="logo">Iron<span>CRM</span></div>
+      <div id="module-list"></div>
+      <div class="sidebar-footer">
+        <span id="db-status">● local</span>
+      </div>
+    </nav>
+    <main id="content">
+      <div id="toolbar">
+        <h2 id="view-title">Dashboard</h2>
+        <div id="toolbar-actions">
+          <label class="scan-btn">
+            📸 Scan
+            <input type="file" id="scan-input" accept="image/*" capture="environment" onchange="handleScan(this.files[0])">
+          </label>
+        </div>
+      </div>
+      <div id="data-area">
+        <div id="loading" class="hidden">Loading...</div>
+        <table id="data-table" class="hidden">
+          <thead id="table-head"></thead>
+          <tbody id="table-body"></tbody>
+        </table>
+        <div id="empty-state">
+          <div class="empty-icon">⚡</div>
+          <p>Select a module or scan a card</p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Scan overlay -->
+  <div id="scan-overlay" class="hidden">
+    <div class="spinner"></div>
+    <div id="scan-status">Analyzing image...</div>
+    <div id="scan-result">
+      <div class="field"><span class="lbl">Name</span> <span id="scan-name">—</span></div>
+      <div class="field"><span class="lbl">Company</span> <span id="scan-company">—</span></div>
+      <div class="field"><span class="lbl">Title</span> <span id="scan-title">—</span></div>
+      <div class="field"><span class="lbl">Phone</span> <span id="scan-phone">—</span></div>
+      <div class="field"><span class="lbl">Email</span> <span id="scan-email">—</span></div>
+      <div class="actions">
+        <button class="scan-action-btn scan-discard" onclick="discardScan()">Discard</button>
+        <button class="scan-action-btn scan-save" onclick="saveScan()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=3"></script>
+</body>
+</html>

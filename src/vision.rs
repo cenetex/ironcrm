@@ -1,8 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::process::Command;
 use std::io::Write;
-use tempfile::NamedTempFile;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -19,19 +17,23 @@ pub struct ScanResult {
 }
 
 /// Scan an image file using llama.cpp with a vision model.
-/// Falls back to a simpler text extraction if llama.cpp isn't available.
+/// Runs inference in a blocking thread to keep the async runtime responsive.
 pub async fn scan_image(image_data: &[u8]) -> Result<ScanResult> {
-    // Save image to temp file
-    let mut tmp = NamedTempFile::new()?;
-    tmp.write_all(image_data)?;
+    let mut tmp = tempfile::NamedTempFile::new()
+        .context("failed to create temp file")?;
+    tmp.write_all(image_data)
+        .context("failed to write image to temp file")?;
     let path = tmp.path().to_string_lossy().to_string();
 
-    // Try llama.cpp first
-    if let Ok(result) = try_llama_vision(&path).await {
-        return Ok(result);
+    // Offload blocking llama.cpp call to a dedicated thread
+    let result = tokio::task::spawn_blocking(move || try_llama_vision(&path)).await;
+
+    match result {
+        Ok(Ok(scan)) => return Ok(scan),
+        Ok(Err(e)) => tracing::warn!("llama.cpp scan error: {}", e),
+        Err(join_err) => tracing::warn!("llama.cpp thread panic: {}", join_err),
     }
 
-    // Fallback: basic file info
     tracing::warn!("llama.cpp not available, using fallback scan");
     Ok(ScanResult {
         suggested_module: "contacts".into(),
@@ -40,13 +42,13 @@ pub async fn scan_image(image_data: &[u8]) -> Result<ScanResult> {
     })
 }
 
-async fn try_llama_vision(image_path: &str) -> Result<ScanResult> {
+fn try_llama_vision(image_path: &str) -> Result<ScanResult> {
     let prompt = r#"Analyze this image. If it's a business card, receipt, or document, extract the following information as JSON. Return ONLY valid JSON, no other text.
 
 {
   "name": "person or business name",
   "company": "company name if present",
-  "title": "job title if present", 
+  "title": "job title if present",
   "phone": "phone number if present",
   "email": "email if present",
   "website": "website if present",
@@ -54,53 +56,48 @@ async fn try_llama_vision(image_path: &str) -> Result<ScanResult> {
   "suggested_module": "contacts if person, accounts if business, opportunities if deal-related"
 }"#;
 
-    // Try common llama.cpp binary names and model paths
-    let candidates = [
-        ("llama-cli", "models/llava-v1.6-mistral-7b.Q4_K_M.gguf"),
-        ("llama-cli", "models/mmproj-llava-v1.6-mistral-7b-f16.gguf"),
-    ];
+    let model_path = "models/llava-v1.6-mistral-7b.Q4_K_M.gguf";
+    let mmproj_path = "models/mmproj-llava-v1.6-mistral-7b-f16.gguf";
+    let has_mmproj = std::fs::metadata(mmproj_path).is_ok();
 
-    for (binary, model) in &candidates {
-        let output = Command::new(binary)
-            .args([
-                "-m", model,
-                "--image", image_path,
-                "-p", prompt,
-                "--temp", "0.1",
-                "-n", "512",
-                "--no-display-prompt",
-            ])
-            .output();
+    let mut cmd = std::process::Command::new("llama-cli");
+    cmd.arg("-m").arg(model_path)
+        .arg("--image").arg(image_path)
+        .arg("-p").arg(prompt)
+        .arg("--temp").arg("0.1")
+        .arg("-n").arg("512")
+        .arg("--no-display-prompt");
 
-        match output {
-            Ok(out) if out.status.success() => {
-                let text = String::from_utf8_lossy(&out.stdout);
-                let text = extract_json_block(&text);
-
-                if let Ok(result) = serde_json::from_str::<ScanResult>(&text) {
-                    return Ok(result);
-                }
-
-                // Try to extract fields from raw text
-                return Ok(ScanResult {
-                    suggested_module: "contacts".into(),
-                    raw_text: Some(text),
-                    ..Default::default()
-                });
-            }
-            Ok(out) => {
-                let err = String::from_utf8_lossy(&out.stderr);
-                tracing::debug!("llama.cpp error: {}", err);
-            }
-            Err(_) => continue,
-        }
+    if has_mmproj {
+        cmd.arg("--mmproj").arg(mmproj_path);
     }
 
-    anyhow::bail!("llama.cpp not found or model not available. Install llama.cpp and download a vision model (e.g. llava-v1.6-mistral-7b) to models/")
+    let output = cmd.output().context("failed to run llama-cli")?;
+
+    if output.status.success() {
+        let text = String::from_utf8_lossy(&output.stdout);
+        let json_text = extract_json_block(&text);
+
+        if let Ok(result) = serde_json::from_str::<ScanResult>(&json_text) {
+            return Ok(result);
+        }
+
+        return Ok(ScanResult {
+            suggested_module: "contacts".into(),
+            raw_text: Some(json_text),
+            ..Default::default()
+        });
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    anyhow::bail!(
+        "llama-cli exited non-zero. Is the model at {}?\n{}",
+        model_path,
+        stderr
+    )
 }
 
 fn extract_json_block(text: &str) -> String {
-    // Find the first { and last }
     if let Some(start) = text.find('{') {
         if let Some(end) = text.rfind('}') {
             return text[start..=end].to_string();
@@ -109,16 +106,23 @@ fn extract_json_block(text: &str) -> String {
     text.to_string()
 }
 
-/// Insert a scanned record into the database
-pub async fn import_scan(pool: &sqlx::sqlite::SqlitePool, module: &str, data: &ScanResult) -> Result<String> {
+/// Insert a scanned record into the database (typed table + blob store).
+pub async fn import_scan(
+    pool: &sqlx::sqlite::SqlitePool,
+    module: &str,
+    data: &ScanResult,
+) -> Result<String> {
     let id = Uuid::new_v4().to_string();
 
     let mut fields = serde_json::Map::new();
     fields.insert("id".into(), serde_json::Value::String(id.clone()));
 
+    // Use module definition's scan mapping, falling back to schema-aware defaults
+    let def = crate::module::get_definition(pool, module).await?;
+    let mapping = def.as_ref().and_then(|d| d.scan_mapping.as_ref());
+
     if let Some(ref name) = data.name {
-        if module == "contacts" || module == "leads" {
-            // Split into first/last name
+        if mapping.map_or(false, |m| m.split_name) {
             let parts: Vec<&str> = name.splitn(2, ' ').collect();
             fields.insert("first_name".into(), serde_json::Value::String(parts[0].to_string()));
             if parts.len() > 1 {
@@ -128,19 +132,41 @@ pub async fn import_scan(pool: &sqlx::sqlite::SqlitePool, module: &str, data: &S
             fields.insert("name".into(), serde_json::Value::String(name.clone()));
         }
     }
-    if let Some(ref c) = data.company { fields.insert("account_name".into(), serde_json::Value::String(c.clone())); }
-    if let Some(ref t) = data.title { fields.insert("title".into(), serde_json::Value::String(t.clone())); }
-    if let Some(ref p) = data.phone { fields.insert("phone_work".into(), serde_json::Value::String(p.clone())); }
-    if let Some(ref e) = data.email { fields.insert("email1".into(), serde_json::Value::String(e.clone())); }
-    if let Some(ref w) = data.website { fields.insert("website".into(), serde_json::Value::String(w.clone())); }
+
+    // Apply scan_source → column_name from the definition mapping
+    let field_map = |scan_key: &str| -> Option<&str> {
+        mapping
+            .and_then(|m| m.sources.get(scan_key))
+            .map(|s| s.as_str())
+    };
+
+    let mut insert_if = |scan_key: &str, scan_val: Option<&String>, default_col: &str| {
+        if let Some(val) = scan_val {
+            let col = field_map(scan_key).unwrap_or(default_col);
+            fields.insert(col.to_string(), serde_json::Value::String(val.clone()));
+        }
+    };
+
+    insert_if("title", data.title.as_ref(), "title");
+    insert_if("phone", data.phone.as_ref(), "phone_work");
+    insert_if("email", data.email.as_ref(), "email1");
+    insert_if("website", data.website.as_ref(), "website");
+    insert_if("company", data.company.as_ref(), "account_name");
 
     let json = serde_json::to_string(&fields)?;
+
+    // Blob store
     sqlx::query("INSERT OR REPLACE INTO records (module, id, data) VALUES (?, ?, ?)")
         .bind(module)
         .bind(&id)
         .bind(&json)
         .execute(pool)
         .await?;
+
+    // Typed table
+    if crate::module::has_definition(pool, module).await? {
+        crate::db::upsert_typed_row(pool, module, &id, &fields).await?;
+    }
 
     Ok(id)
 }

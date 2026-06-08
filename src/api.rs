@@ -6,23 +6,25 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sqlx::sqlite::SqlitePool;
+use crate::module::ModuleDefinition;
 
 // ── Types ──
 
 #[derive(Serialize)]
-pub(crate) struct HealthResponse {
+pub struct HealthResponse {
     status: &'static str,
     version: &'static str,
 }
 
 #[derive(Serialize)]
-pub(crate) struct ModuleListResponse {
+pub struct ModuleListResponse {
+    pub definitions: Vec<ModuleDefinition>,
     modules: Vec<String>,
     count: usize,
 }
 
 #[derive(Serialize)]
-pub(crate) struct ModuleRecordsResponse {
+pub struct ModuleRecordsResponse {
     module: String,
     data: Vec<Map<String, Value>>,
     total: i64,
@@ -31,20 +33,20 @@ pub(crate) struct ModuleRecordsResponse {
 }
 
 #[derive(Serialize)]
-pub(crate) struct ModuleRecordResponse {
+pub struct ModuleRecordResponse {
     module: String,
     data: Option<Map<String, Value>>,
     relationships: Vec<Map<String, Value>>,
 }
 
 #[derive(Deserialize)]
-pub(crate) struct Pagination {
+pub struct Pagination {
     limit: Option<u32>,
     offset: Option<u32>,
 }
 
 #[derive(Serialize)]
-pub(crate) struct ErrorResponse {
+pub struct ErrorResponse {
     error: String,
 }
 
@@ -62,7 +64,8 @@ pub async fn list_modules(State(pool): State<SqlitePool>) -> Json<ModuleListResp
         .await
         .unwrap_or_default();
     let count = modules.len();
-    Json(ModuleListResponse { modules, count })
+    let definitions = crate::module::get_all_definitions(&pool).await.unwrap_or_default();
+    Json(ModuleListResponse { modules, count, definitions })
 }
 
 pub async fn list_records(
@@ -154,7 +157,7 @@ use axum::extract::Multipart;
 use crate::vision::{scan_image, import_scan, ScanResult};
 
 pub async fn scan_image_endpoint(
-    State(pool): State<SqlitePool>,
+    State(_pool): State<SqlitePool>,
     mut multipart: Multipart,
 ) -> Result<Json<ScanResult>, (StatusCode, Json<ErrorResponse>)> {
     while let Some(field) = multipart.next_field().await.unwrap_or(None) {
@@ -183,4 +186,21 @@ pub async fn import_scan_endpoint(
         Json(ErrorResponse { error: e.to_string() })
     ))?;
     Ok(Json(serde_json::json!({"status": "ok", "id": id})))
+}
+
+pub async fn get_module_definition(
+    State(pool): State<SqlitePool>,
+    Path(module): Path<String>,
+) -> Result<Json<ModuleDefinition>, (StatusCode, Json<ErrorResponse>)> {
+    crate::module::get_definition(&pool, &module)
+        .await
+        .map_err(|e| (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse { error: e.to_string() }),
+        ))?
+        .map(Json)
+        .ok_or((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse { error: format!("No definition for module '{}'", module) }),
+        ))
 }

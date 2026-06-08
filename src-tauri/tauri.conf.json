@@ -4,7 +4,6 @@
   "identifier": "com.ironcrm.app",
   "build": {
     "frontendDist": "../frontend",
-    "devUrl": "http://127.0.0.1:3001",
     "beforeDevCommand": "",
     "beforeBuildCommand": ""
   },
@@ -12,10 +11,13 @@
     "windows": [
       {
         "title": "IronCRM",
+        "label": "main",
         "width": 1280,
         "height": 800,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "devtools": true,
+        "useHttpsScheme": false
       }
     ],
     "security": {

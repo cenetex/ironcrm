@@ -1,24 +1,22 @@
-use chrono::NaiveDateTime;
-use serde::Serialize;
-use sqlx::FromRow;
-use uuid::Uuid;
+use crate::models::{ModuleSchema, ModuleDefinition, ScanMapping, field, field_default, field_scan, scan};
+use std::collections::HashMap;
 
-#[derive(Debug, Clone, Serialize, FromRow)]
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct Contact {
-    pub id: Uuid,
-    pub date_entered: Option<NaiveDateTime>,
-    pub date_modified: Option<NaiveDateTime>,
-    pub modified_user_id: Option<Uuid>,
-    pub created_by: Option<Uuid>,
+    pub id: Option<String>,
+    pub date_entered: Option<String>,
+    pub date_modified: Option<String>,
+    pub modified_user_id: Option<String>,
+    pub created_by: Option<String>,
     pub description: Option<String>,
-    pub deleted: Option<i8>,
-    pub assigned_user_id: Option<Uuid>,
+    pub deleted: Option<i64>,
+    pub assigned_user_id: Option<String>,
     pub salutation: Option<String>,
     pub first_name: Option<String>,
     pub last_name: Option<String>,
     pub title: Option<String>,
     pub department: Option<String>,
-    pub do_not_call: Option<i8>,
+    pub do_not_call: Option<i64>,
     pub phone_home: Option<String>,
     pub phone_mobile: Option<String>,
     pub phone_work: Option<String>,
@@ -39,7 +37,51 @@ pub struct Contact {
     pub assistant: Option<String>,
     pub assistant_phone: Option<String>,
     pub lead_source: Option<String>,
-    pub reports_to_id: Option<Uuid>,
-    pub birthdate: Option<NaiveDateTime>,
-    pub account_id: Option<Uuid>,
+    pub reports_to_id: Option<String>,
+    pub birthdate: Option<String>,
+    pub account_id: Option<String>,
+}
+
+impl ModuleSchema for Contact {
+    fn definition() -> ModuleDefinition {
+        ModuleDefinition {
+            module: "contacts".into(), label: "Contact".into(), label_plural: "Contacts".into(),
+            icon: Some("C".into()), default_view: "table".into(),
+            board_field: None, board_stages: None,
+            list_columns: vec!["full_name","title","account_id","email1","phone_work"].into_iter().map(String::from).collect(),
+            detail_summary: vec!["title","email1","phone_work"].into_iter().map(String::from).collect(),
+            fields: vec![
+                field("id","TEXT",0),
+                field("date_entered","TEXT",1), field("date_modified","TEXT",2),
+                field("modified_user_id","TEXT",3), field("created_by","TEXT",4),
+                field("description","TEXT",5), field_default("deleted","INTEGER",6,"0"),
+                field("assigned_user_id","TEXT",7),
+                field("salutation","TEXT",8), field("first_name","TEXT",9),
+                field("last_name","TEXT",10), field_scan("title","TEXT",11,"title"),
+                field("department","TEXT",12), field_default("do_not_call","INTEGER",13,"0"),
+                field("phone_home","TEXT",14), field("phone_mobile","TEXT",15),
+                field_scan("phone_work","TEXT",16,"phone"), field("phone_other","TEXT",17),
+                field("phone_fax","TEXT",18), field_scan("email1","TEXT",19,"email"),
+                field("email2","TEXT",20),
+                field("primary_address_street","TEXT",21), field("primary_address_city","TEXT",22),
+                field("primary_address_state","TEXT",23), field("primary_address_postalcode","TEXT",24),
+                field("primary_address_country","TEXT",25),
+                field("alt_address_street","TEXT",26), field("alt_address_city","TEXT",27),
+                field("alt_address_state","TEXT",28), field("alt_address_postalcode","TEXT",29),
+                field("alt_address_country","TEXT",30),
+                field("assistant","TEXT",31), field("assistant_phone","TEXT",32),
+                field("lead_source","TEXT",33), field("reports_to_id","TEXT",34),
+                field("birthdate","TEXT",35), field("account_id","TEXT",36),
+            ],
+            scan_mapping: Some(ScanMapping {
+                sources: HashMap::from([
+                    scan("title","title"), scan("phone","phone_work"),
+                    scan("email","email1"), scan("website","website"),
+                    scan("company","account_name"),
+                ]),
+                split_name: true,
+            }),
+            indexes: vec!["last_name,first_name".into(),"account_id".into(),"deleted".into()],
+        }
+    }
 }
