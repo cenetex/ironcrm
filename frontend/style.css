@@ -419,8 +419,7 @@ button {
   border: 1px solid var(--border);
 }
 .segmented-btn,
-.tool-btn,
-.scan-btn {
+.tool-btn {
   height: 36px;
   border-radius: 4px;
   border: 1px solid var(--border);
@@ -441,7 +440,6 @@ button {
   border-color: #2c3d58;
 }
 .tool-btn:hover,
-.scan-btn:hover,
 .segmented-btn:hover {
   background: var(--bg-hover);
 }
@@ -453,20 +451,6 @@ button {
 .primary-btn:hover {
   background: var(--primary);
 }
-.scan-btn {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  overflow: hidden;
-}
-.scan-btn input[type=file] {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-
 #active-view-bar {
   display: flex;
   align-items: center;
@@ -1107,24 +1091,6 @@ button {
   transform: translateY(0);
 }
 
-#scan-overlay {
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(6, 10, 16, 0.78);
-  z-index: 999;
-}
-.scan-sheet {
-  width: min(420px, calc(100vw - 32px));
-  padding: 16px;
-  border-radius: 6px;
-  border: 1px solid var(--border-strong);
-  background: #121b29;
-  box-shadow: var(--shadow);
-}
-
 #toolbar::after,
 #active-view-bar::after {
   content: '';
@@ -1149,65 +1115,13 @@ button {
 .dashboard-panel,
 .related-row,
 .tool-btn,
-.scan-btn,
 .segmented-control,
 .search-shell,
 .meta-chip,
 .detail-chip,
 .icon-btn,
-.toast,
-.scan-sheet {
+.toast {
   backface-visibility: hidden;
-}
-.spinner {
-  width: 46px;
-  height: 46px;
-  margin: 0 auto 12px;
-  border-radius: 999px;
-  border: 3px solid rgba(85, 167, 255, 0.18);
-  border-top-color: var(--primary);
-  animation: spin 0.85s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-#scan-status {
-  text-align: center;
-  color: var(--text-muted);
-  font-size: 13px;
-}
-#scan-result {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 18px;
-}
-#scan-result .field {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid rgba(39, 50, 68, 0.55);
-  font-size: 13px;
-}
-#scan-result .lbl { color: var(--text-soft); }
-#scan-result .actions {
-  display: flex;
-  gap: 10px;
-  margin-top: 6px;
-}
-.scan-action-btn {
-  flex: 1;
-  height: 38px;
-  border-radius: 4px;
-  border: 1px solid var(--border);
-  cursor: pointer;
-}
-.scan-discard {
-  background: var(--bg-panel);
-  color: var(--text);
-}
-.scan-save {
-  background: var(--primary-strong);
-  color: var(--text);
 }
 
 .hidden { display: none !important; }

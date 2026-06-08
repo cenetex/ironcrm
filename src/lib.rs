@@ -1,6 +1,8 @@
 pub mod db;
 pub mod module;
 pub mod models;
+
+#[cfg(feature = "scanner-module")]
 pub mod vision;
 
 #[cfg(feature = "http-server")]

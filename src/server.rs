@@ -1,7 +1,10 @@
 use crate::api;
 use crate::db;
 use anyhow::Result;
-use axum::{routing::{get, post}, Router};
+use axum::{routing::get, Router};
+
+#[cfg(feature = "scanner-module")]
+use axum::routing::post;
 use std::path::PathBuf;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
@@ -24,9 +27,14 @@ pub async fn run_server(db_path: &str, port: u16) -> Result<()> {
         .route("/api/v1/modules", get(api::list_modules))
         .route("/api/v1/{module}/definition", get(api::get_module_definition))
         .route("/api/v1/{module}", get(api::list_records))
-        .route("/api/v1/{module}/{id}", get(api::get_record))
-        .route("/api/v1/scan", post(api::scan_image_endpoint))
-        .route("/api/v1/{module}/import", post(api::import_scan_endpoint));
+        .route("/api/v1/{module}/{id}", get(api::get_record));
+
+    #[cfg(feature = "scanner-module")]
+    {
+        app = app
+            .route("/api/v1/modules/scanner/scan", post(api::scan_image_endpoint))
+            .route("/api/v1/modules/scanner/{module}/import", post(api::import_scan_endpoint));
+    }
 
     if frontend_dir.exists() {
         app = app.fallback_service(ServeDir::new(&frontend_dir));

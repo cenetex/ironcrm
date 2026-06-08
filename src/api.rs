@@ -153,9 +153,13 @@ pub async fn get_record(
     }))
 }
 
+#[cfg(feature = "scanner-module")]
 use axum::extract::Multipart;
-use crate::vision::{scan_image, import_scan, ScanResult};
 
+#[cfg(feature = "scanner-module")]
+use crate::vision::{import_scan, scan_image, ScanResult};
+
+#[cfg(feature = "scanner-module")]
 pub async fn scan_image_endpoint(
     State(_pool): State<SqlitePool>,
     mut multipart: Multipart,
@@ -176,6 +180,7 @@ pub async fn scan_image_endpoint(
     Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "No image uploaded".into() })))
 }
 
+#[cfg(feature = "scanner-module")]
 pub async fn import_scan_endpoint(
     State(pool): State<SqlitePool>,
     Path(module): Path<String>,

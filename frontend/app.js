@@ -326,8 +326,8 @@ function renderDashboard() {
   dashboard.innerHTML = '<section class="dashboard-grid">' + cards + '</section>' +
     '<section class="dashboard-band">' +
     '<div class="dashboard-panel"><h3>Pipeline posture</h3><p>' + (moduleCounts.opportunities || 0) + ' opportunities and ' + (moduleCounts.leads || 0) + ' leads loaded locally.</p></div>' +
-    '<div class="dashboard-panel"><h3>Capture</h3><p>Business-card scan is wired into the shell and ready for richer parsing.</p></div>' +
-    '<div class="dashboard-panel"><h3>Data ownership</h3><p>SQLite-backed, local-first, with the HTTP surface already feature-gated as optional.</p></div>' +
+    '<div class="dashboard-panel"><h3>Portable bundle</h3><p>Export/import restore is the next product proof point for complete data ownership.</p></div>' +
+    '<div class="dashboard-panel"><h3>Data ownership</h3><p>SQLite-backed, local-first, with optional modules kept out of the core path.</p></div>' +
     '</section>';
 }
 
@@ -462,7 +462,7 @@ function renderDetail(module, record, relationships) {
     : '<div class="section-empty">No linked records yet.</div>';
 
   var activityHtml = '<div class="timeline-entry"><div class="timeline-dot"></div><div><div class="timeline-title">Record loaded</div><div class="timeline-subtitle">Ready for notes, tasks, and history next.</div></div></div>' +
-    '<div class="timeline-entry"><div class="timeline-dot muted"></div><div><div class="timeline-title">Portable identity groundwork</div><div class="timeline-subtitle">DID and consent layers can slot into this inspector cleanly.</div></div></div>';
+    '<div class="timeline-entry"><div class="timeline-dot muted"></div><div><div class="timeline-title">Portable export groundwork</div><div class="timeline-subtitle">Stable IDs, consent records, and bundle restore can slot into this inspector cleanly.</div></div></div>';
 
   document.getElementById('detail-sections').innerHTML =
     '<section class="detail-section"><div class="section-head">Overview</div><div class="detail-fields">' + overviewFields + '</div></section>' +
@@ -596,28 +596,11 @@ async function init() {
   }
 }
 
-function handleScan(file) {
-  if (!file) return;
-  document.getElementById('scan-overlay').classList.remove('hidden');
-  document.getElementById('scan-status').textContent = 'Scanner wiring is present. Local model hookup is next.';
-}
-
-function discardScan() {
-  document.getElementById('scan-overlay').classList.add('hidden');
-}
-
-function saveScan() {
-  toast('Scan import flow is queued behind quick-create.');
-}
-
 window.selectModule = selectModule;
 window.changeView = changeView;
 window.openDetail = openDetail;
 window.scrollToBoardStage = scrollToBoardStage;
 window.toggleStageSection = toggleStageSection;
-window.handleScan = handleScan;
-window.discardScan = discardScan;
-window.saveScan = saveScan;
 window.toast = toast;
 
 init();

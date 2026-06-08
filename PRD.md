@@ -1,221 +1,305 @@
-# IronCRM PRD — The Portable CRM
+# IronCRM PRD - The Portable CRM
 
-**Status:** Draft v1
-**Product:** IronCRM (rebrand: The Portable CRM)
+**Status:** Draft v2
+**Product:** IronCRM (The Portable CRM)
 **Author:** Rati
-**Date:** 2026-06-06
+**Date:** 2026-06-07
 
 ---
 
 ## 1. Executive Summary
 
-IronCRM is a local-first, desktop CRM for small and mid-size businesses that makes customer data portable by default. Every contact, deal, and case is anchored to a persistent identifier that survives CRM migrations. Every export includes schema, relationships, and consent receipts — not just rows.
+IronCRM is a local-first desktop CRM for small businesses that makes customer data portable by default. It is built for people who want the practical benefits of a CRM without surrendering their customer relationships to a hosted vendor, opaque export buttons, or per-seat SaaS pricing.
 
-The CRM industry monetizes lock-in. IronCRM monetizes trust: a business that knows it can leave is a business that chooses to stay.
+The core promise is simple:
+
+> **Your CRM data comes out whole: records, relationships, custom fields, notes, consent evidence, and schema.**
+
+Most CRMs treat export as a compliance checkbox. IronCRM treats export as a product feature. A complete `.ironcrm` bundle can be restored into a fresh IronCRM instance and inspected without vendor permission. Over time, that bundle format should become an open portability spec that other tools can implement.
+
+IronCRM monetizes trust: a business that knows it can leave is a business that can confidently choose to stay.
 
 ## 2. Problem Statement
 
-**For traditional SMBs:** Switching CRMs means losing relationship history, custom field definitions, pipeline stages, and activity context. CSV exports are lossy. Migrations routinely cost $5k–$50k in services and data cleanup. The friction is designed — incumbents profit from it.
+### For traditional SMBs
 
-**For the regulatory environment:** GDPR (Art. 20), CCPA, and the EU Data Act increasingly mandate data portability. CRM vendors comply with grudging, incomplete export buttons. No CRM on the market treats portability as a first-class feature.
+Switching CRMs is painful because exports are lossy. Businesses often lose relationship history, custom field definitions, pipeline stages, record links, and activity context. Migration projects can cost thousands of dollars in services and cleanup.
 
-**For IronCRM specifically:** The current product is a proof-of-concept — a SuiteCRM-compatible viewer with an AI business-card scanner. It lacks write paths, pipeline management, and a reason to use it day-to-day. Repositioning around portability gives it a moat no incumbent can replicate without rewriting their data architecture.
+This is especially painful for small operators who do not have technical staff and cannot justify enterprise migration budgets.
+
+### For SuiteCRM users
+
+SuiteCRM users chose control and low cost, but many now carry the burden of PHP hosting, MySQL maintenance, aging plugins, and manual backups. They have valuable CRM data, but the path from a self-hosted SuiteCRM instance to a simpler desktop CRM is unclear.
+
+### For regulated and privacy-sensitive work
+
+Lawyers, therapists, accountants, doctors, consultants, and local service businesses often need to know why a contact is stored, what data exists, and how to respond to access or deletion requests. Existing CRMs either bury this workflow or require trusting a cloud vendor.
+
+### For IronCRM specifically
+
+The current product is a proof-of-concept: a SuiteCRM-compatible local viewer with early module definitions, import plumbing, and scanner scaffolding. The next product step is not more novelty. It is a reliable daily CRM loop:
+
+1. import or create data,
+2. manage it locally,
+3. preserve relationships and notes,
+4. export it completely,
+5. restore it somewhere clean.
 
 ## 3. Target Users
 
-### Primary: Small business owners (1–25 employees)
+### Primary: Small business owners and solo teams, 1-25 employees
 
-Who they are: Freelance consultants, boutique law firms, insurance agents, real estate teams, local service businesses.
+Examples: consultants, boutique agencies, local service businesses, insurance agents, real estate teams, bookkeepers, and independent sales teams.
 
 What they share:
-- Currently use spreadsheets, SuiteCRM, or a free HubSpot/Zoho tier
-- Have been burned by data lock-in at least once
-- Care about ownership but don't have technical staff
-- Will not pay per-seat SaaS pricing
+
+- They currently use spreadsheets, SuiteCRM, or a free/cheap SaaS CRM.
+- They care about ownership but do not want to administer a server.
+- They dislike per-seat pricing.
+- They have been burned by migration or fear being trapped later.
+- They need contacts, accounts, opportunities, notes, and search more than enterprise automation.
 
 ### Secondary: SuiteCRM escapees
 
-Organizations that adopted SuiteCRM for cost reasons, have outgrown its PHP maintenance burden, and want a migration path that preserves their data and customizations intact.
+Organizations that adopted SuiteCRM for cost/control reasons, have accumulated years of data and custom fields, and want to leave the PHP/MySQL maintenance burden without losing context.
 
 ### Tertiary: Privacy-sensitive professionals
 
-Doctors, therapists, lawyers, and accountants who must keep client data local for compliance (HIPAA, attorney-client privilege) but still need CRM functionality.
+Professionals who prefer or require local storage: therapists, attorneys, accountants, small clinics, and compliance-conscious consultants.
 
 ## 4. Value Proposition
 
-> **Your customer relationships belong to you. Switch CRMs in one click. Prove consent to auditors instantly.**
+> **Never lose your customer data again. Manage relationships locally. Export everything in one complete, restorable bundle.**
 
 | Pillar | What it means |
 |--------|---------------|
-| **Portable by default** | Every record gets a persistent DID. Exports are self-describing bundles, not lossy CSVs. |
-| **Local-first, always** | Data lives on your device. No cloud dependency. Works offline. |
-| **Consent-aware** | GDPR/CCPA consent receipts are issued per-contact and travel with the record. Audit-ready. |
-| **AI-assisted entry** | Scan business cards, invoices, and contracts into structured records using local vision models. |
+| **Complete portability** | Export records, schema, custom fields, relationships, activities, consent evidence, and metadata together. |
+| **Local-first control** | Data lives on the user's machine in SQLite. No account signup, no cloud dependency, no sync latency. |
+| **Daily CRM basics** | Accounts, contacts, opportunities, leads, cases, relationships, notes, search, and simple pipeline views. |
+| **Migration-friendly** | SuiteCRM and CSV imports map into IronCRM's canonical model while preserving source metadata. |
+| **Consent-aware** | Consent/legal-basis records are first-class CRM data and included in exports. |
+| **Extensible modules** | Optional modules can add scanners, calendar, email, invoicing, and other workflows without bloating core v1. |
 
 ## 5. Competitive Landscape
 
 | Competitor | Lock-in mechanism | Portability story | Local-first |
 |------------|-------------------|-------------------|-------------|
-| Salesforce | Custom objects, workflows, integrations | CSV export, paid data recovery | No |
-| HubSpot | Free tier gravity, marketing integrations | API export (rate-limited) | No |
-| SuiteCRM | Self-hosted PHP, MySQL dependency | Database dump (DIY) | Kind of |
-| Zoho CRM | Module ecosystem | CSV per module | No |
-| Airtable / Notion | Ecosystem lock-in, no CRM schema | CSV / JSON export | No |
-| **IronCRM** | **None — design goal** | **Self-describing bundles with DIDs and consent receipts** | **Yes** |
+| Salesforce | Custom objects, workflows, integrations, admin dependency | CSV/API export plus paid migration services | No |
+| HubSpot | Free-tier gravity, marketing/email ecosystem, rate limits | API/CSV export with relationship loss risk | No |
+| Zoho CRM | App suite integration, custom modules | CSV per module | No |
+| SuiteCRM | Self-hosted PHP/MySQL, plugin and schema drift | Database dump, DIY migration | Kind of |
+| Airtable/Notion | Flexible schema with weak CRM semantics | CSV/JSON export, limited CRM reconstruction | No |
+| Spreadsheets | No app lock-in, but weak relationships/history | File portability, poor CRM semantics | Yes |
+| **IronCRM** | **None by design** | **Complete `.ironcrm` bundle with data, schema, links, notes, and consent evidence** | **Yes** |
 
 ## 6. Product Principles
 
-1. **Data outlasts the tool.** A customer's CRM data should survive any vendor switch intact and semantically meaningful.
-2. **No lock-in. Not even soft.** Export is always one click, always complete, always in an open format.
-3. **Consent is a first-class object.** Every contact record carries proof of the legal basis for holding it.
-4. **Local AI, not cloud AI.** Business cards and documents are scanned on-device. Sensitive data never leaves the machine.
-5. **Desktop-native feel.** Built with Tauri for low memory, fast startup, and native OS integration — not an Electron wrapper.
+1. **Data outlasts the tool.** CRM data should remain meaningful after it leaves the app.
+2. **Export is a core workflow.** Export must be complete, one-click, documented, and regularly tested by round-trip restore.
+3. **Local-first before networked.** The product must be useful with no account, no server, and no internet connection.
+4. **Boring CRM beats clever infrastructure.** Contacts, accounts, notes, search, and pipeline management must work before advanced identity, sync, or AI features.
+5. **Consent is operational, not ornamental.** Users should know which contacts have consent/legal-basis evidence, what is expiring, and what can be exported for an audit.
+6. **Technical complexity stays below the UX.** Users should see "portable record," "complete export," and "consent record," not DIDs, VCs, hashes, or schemas unless they ask.
+7. **Modules extend the core.** Scanner, calendar, email, social, and document features should be modules that feed the same canonical schema and export format.
 
 ## 7. Functional Scope
 
-### 7.1 Core CRM (v1)
+### 7.1 Core CRM v1
 
 | Feature | Detail |
 |---------|--------|
-| Accounts | CRUD, custom fields, billing/shipping addresses, industry classification |
-| Contacts | CRUD, name, title, phones, emails, accounts linkage |
-| Leads | CRUD, status pipeline, lead source, conversion tracking |
-| Opportunities | CRUD, kanban view, sales stages, probability, amounts, close dates |
-| Cases | CRUD, priority, status, resolution, linked to accounts/contacts |
-| Relationships | Many-to-many between any module pair, navigable from any record |
-| Search | Full-text across all modules, filterable by field |
-| Activity log | Timestamped notes, calls, emails per record |
+| Accounts | CRUD, primary contact info, address, industry/type, custom fields. |
+| Contacts | CRUD, name, title, primary phone/email, account linkage, custom fields. |
+| Opportunities | CRUD, amount, stage, probability, close date, account/contact links, kanban board. |
+| Leads | CRUD, status, source, conversion path into account/contact/opportunity. |
+| Cases | CRUD, priority, status, resolution, account/contact links. |
+| Relationships | First-class links between core records, navigable from detail views and preserved in export. |
+| Activity log | Append-only notes and timeline events per record. Field-level signatures are deferred. |
+| Search | Full-text or pragmatic indexed search across core modules and notes. |
+| Custom fields | Source custom fields and user-defined fields are stored in canonical custom field containers and exported with schema. |
 
-### 7.2 Portability Engine (v1)
-
-| Feature | Detail |
-|---------|--------|
-| DID anchoring | Every contact and account gets a `did:key` on creation. Stored locally, exportable. |
-| Self-describing exports | Export bundle: data + module schemas + relationship graph + consent receipts. JSON-based, gzipped. |
-| Self-describing imports | Ingest a bundle from any compliant CRM and reconstruct modules, relationships, and custom fields. |
-| Consent receipts | Per-contact VC (`ConsentCredential`): legal basis, scope, expiration. Stays with the record forever. |
-| Snapshot archives | One-click content-addressed snapshot of full DB state. Hash-verified on restore. |
-
-### 7.3 AI Scanner (v1)
+### 7.2 Import and canonical schema v1
 
 | Feature | Detail |
 |---------|--------|
-| Business card → Contact | Photograph → structured `Contact` with name, title, phone, email, company |
-| Document → Opportunity | Photograph an invoice or contract → `Opportunity` with amount, counterparty, date |
-| Fully local | Uses bundled llama.cpp + vision model. No cloud inference. No telemetry. |
+| Canonical model | IronCRM-native structs for core modules with simple primary fields plus overflow/custom fields. |
+| SuiteCRM import | Map SuiteCRM tables and custom fields into the canonical model while retaining source IDs and metadata. |
+| CSV import | Column detection and mapping flow for contacts/accounts/opportunities. |
+| Generic JSON import | Import records from a documented JSON shape that includes module/schema metadata. |
+| Source preservation | Imported records retain source system, source module, source ID, import timestamp, and raw/original fields where useful. |
 
-### 7.4 Deferred (v2+)
+### 7.3 Portable bundle v1
 
-- IPFS/Arweave pinning of snapshot archives (verifiable off-site backup)
-- DID document resolution for cross-business contact sharing
-- Multi-user with CRDT-based sync (no central server)
-- Email/calendar integration
-- Web-based access (self-hosted companion service)
-- Mobile companion app
+| Feature | Detail |
+|---------|--------|
+| `.ironcrm` export | A single archive containing manifest, records, schemas, custom field definitions, relationships, activities, consent records, and source metadata. |
+| Round-trip restore | A bundle exported from IronCRM can initialize a fresh IronCRM database with equivalent records and relationships. |
+| Versioned manifest | Bundle declares format version, app version, generated time, module list, counts, and feature flags. |
+| Integrity checks | Bundle includes hashes/checksums so restores can detect corruption or tampering. Cryptographic signing is deferred. |
+| Open spec | The bundle shape is documented enough for future converters/importers. |
+
+### 7.4 Consent and audit v1
+
+| Feature | Detail |
+|---------|--------|
+| Consent/legal basis record | Per-contact record containing legal basis, scope/purpose, evidence note, source, issued date, and optional expiry. |
+| Consent badge | Contact detail shows missing, valid, expiring, or expired consent status. |
+| Expiry dashboard | List contacts with expiring/missing consent evidence. |
+| Record export | Export a contact with related account, opportunities/cases, activities, and consent evidence. |
+
+Notes:
+
+- v1 should be designed to support GDPR/CCPA workflows but should avoid overclaiming legal compliance.
+- W3C Verifiable Credentials and signed receipts are useful later, but plain structured consent records are sufficient for the first product loop.
+
+### 7.5 Stable identity v1/v2 boundary
+
+IronCRM needs stable portable record identifiers, but v1 does not require every record to own a cryptographic key.
+
+Recommended model:
+
+- every record gets an immutable IronCRM portable ID on creation/import,
+- imported records preserve external/source IDs,
+- each workspace has a local signing identity reserved for future signed exports and consent receipts,
+- DID/VC support is deferred until after bundle round-trip and consent UX are proven.
+
+Future DID support can wrap the stable ID model without forcing cryptographic concepts into early UX.
+
+### 7.6 Optional scanner module, not core v1
+
+The scanner is an optional module that feeds data into the same import/mapping pipeline as CSV, SuiteCRM, and JSON. It is not a core dependency for v1.
+
+| Feature | Detail |
+|---------|--------|
+| Business card scanner | Optional module: image/webcam input to suggested contact/account fields. |
+| Document scanner | Optional/experimental module: invoice/contract extraction to opportunity or activity drafts. |
+| Local inference | Prefer local inference; model download/bundling should be optional because large models increase install size and support burden. |
+| Human confirmation | Scanner output always creates drafts that users confirm before save. |
+
+### 7.7 Deferred v2+
+
+- Signed export bundles.
+- W3C Verifiable Credential consent receipts.
+- DID-based workspace or record identity.
+- CRDT/multi-device sync.
+- Email/calendar integrations.
+- Scanner module polish and model distribution.
+- Plugin/module SDK.
+- IPFS/Arweave/off-site encrypted archives.
+- Web companion and mobile companion.
 
 ## 8. User Journeys
 
-### Journey A: New business sets up their CRM
+### Journey A: New business starts locally
 
-1. **Ana** runs a boutique PR agency with 3 employees. She downloads IronCRM.
-2. On first launch, she sees an empty kanban and a prompt: "Add your first contact" with options: *Create manually*, *Import from SuiteCRM*, *Import from CSV*, or *Scan a business card*.
-3. She imports a CSV of 80 media contacts. IronCRM detects columns, maps them to Contact fields, and creates the records — each with a DID generated automatically.
-4. She opens a contact. The detail panel shows the record, a relationship tab (linked accounts), an activity log, and a **consent badge**: "No consent recorded." She clicks it, sets "Legitimate interest — journalist outreach" with a 2-year expiry. IronCRM issues a `ConsentCredential` and attaches it.
-5. She creates her first Opportunity from the contact: "Q3 media buy — TechCrunch" with a $15k amount and "Proposal" stage. It appears on her kanban board.
-6. She closes the app. Everything is local. No account signup. No sync latency.
+1. Ana runs a boutique PR agency and downloads IronCRM.
+2. On first launch, she chooses: create manually, import CSV, or import from SuiteCRM.
+3. She imports a CSV of 80 media contacts. IronCRM detects columns, lets her map them, and stores records with stable portable IDs.
+4. She opens a contact. The detail view shows fields, account link, activity timeline, and a consent badge: "No consent recorded."
+5. She records "Legitimate interest - journalist outreach - expires in 2 years."
+6. She creates an opportunity linked to that contact and account.
+7. She exports a `.ironcrm` bundle as a backup. No account signup or cloud sync is required.
 
 ### Journey B: SuiteCRM migration
 
-1. **Marcus** runs a manufacturing rep firm on SuiteCRM. He has 2,000 accounts, 5,000 contacts, and 400 opportunities across 6 years. SuiteCRM's PHP version is EOL and he's tired of patching it.
-2. He points IronCRM at his MySQL instance: `ironcrm import`.
-3. IronCRM discovers all SuiteCRM modules, imports records with relationships intact, and maps custom fields into the local schema.
-4. During import, every contact, account, and opportunity is assigned a DID. The relationship graph (accounts_contacts, accounts_opportunities) is reconstructed.
-5. Marcus opens IronCRM. His data is there. His custom fields are there. His pipeline stages are there.
-6. He exports a snapshot bundle for safekeeping. The bundle is a single `.ironcrm` file: his entire CRM, verifiable and portable.
+1. Marcus runs a manufacturing rep firm on SuiteCRM with years of accounts, contacts, custom fields, and opportunities.
+2. He points IronCRM at his SuiteCRM MySQL database or exported dump.
+3. IronCRM maps SuiteCRM modules into its canonical records and stores unmapped fields as custom/source metadata.
+4. Relationship tables are reconstructed as IronCRM links.
+5. Marcus opens IronCRM and sees usable accounts, contacts, opportunities, notes, and pipeline stages.
+6. He exports a `.ironcrm` bundle and restores it into a fresh local database to verify the migration.
 
-### Journey C: Regulatory audit
+### Journey C: Regulatory/audit request
 
-1. **Dr. Chen** runs a private therapy practice. A client submits a GDPR Subject Access Request.
-2. She opens IronCRM, searches for the client by name. The contact detail shows all stored fields, the activity log, and the **consent receipt**: "Explicit consent — therapy relationship — expires 2028-03-14." The receipt includes a timestamp and the legal basis.
-3. She clicks "Export record." IronCRM produces a signed JSON bundle containing the contact, all related case notes, and the consent credential.
-4. She sends the bundle to the client. The client or their representative can verify the consent credential independently — no need to trust Dr. Chen's word or her CRM.
-5. The audit request is resolved in minutes. No legal consultation needed.
+1. Dr. Chen receives a subject access request.
+2. She searches for the client in IronCRM.
+3. The contact detail shows fields, related cases/activities, and consent/legal-basis evidence.
+4. She clicks "Export record." IronCRM produces a structured JSON/archive containing the contact, related records, activities, and consent evidence.
+5. The request is resolved from local data without waiting on a SaaS vendor.
 
 ### Journey D: Switching away from IronCRM
 
-1. **Priya** has used IronCRM for 2 years. She decides to switch to another CRM.
-2. She clicks "Export all." IronCRM produces a `.ironcrm` bundle.
-3. The bundle contains:
-   - All records per module (accounts, contacts, leads, opportunities, cases)
-   - Module schemas (field names, types, custom field definitions)
-   - Full relationship graph
-   - Consent receipts for every contact
-   - Pipeline stage definitions
-4. Her new CRM (if it supports the IronCRM Portable format — or via an open-spec converter) ingests the bundle. Her contacts have the same DIDs they were assigned in IronCRM. The audit trail is intact.
-5. Priya's migration is complete in under 5 minutes. No data cleaning. No lost context.
+1. Priya has used IronCRM for two years and decides to move elsewhere.
+2. She clicks "Export all."
+3. IronCRM produces a `.ironcrm` bundle containing records, module schemas, custom fields, relationships, activity log, consent records, and manifest.
+4. A converter or compliant CRM imports the bundle.
+5. Her migration does not depend on hidden APIs, vendor permission, or manual CSV stitching.
 
-### Journey E: Field use — scanning at a conference
+### Journey E: Optional scanner module at a conference
 
-1. **James** is at a trade show. He meets a potential supplier and gets their business card.
-2. He opens IronCRM on his laptop, clicks "Scan," and holds the card to his webcam.
-3. The local vision model extracts: name, company, title, phone, email. IronCRM suggests creating a Contact linked to a new Account for the supplier's company.
-4. James confirms. Both records are created with DIDs. The contact gets a consent receipt auto-generated as "Legitimate interest — business contact — 3 years."
-5. Back at his hotel, he attaches the supplier to an opportunity in his pipeline. The relationship is preserved.
+1. James enables the scanner module before a trade show.
+2. He photographs a business card.
+3. The scanner suggests contact/account fields.
+4. James confirms or edits the draft.
+5. The created records are ordinary IronCRM records and are included in exports like everything else.
 
 ## 9. Architecture
 
+```mermaid
+graph TD
+    subgraph App["Tauri Desktop App"]
+        FE["Frontend<br/>HTML/CSS/JS"]
+        BE["Rust Backend<br/>Axum + sqlx"]
+    end
+
+    FE --> BE
+    BE --> SQLite
+
+    subgraph SQLite["SQLite Database"]
+        T1["canonical tables<br/>accounts, contacts, leads,<br/>opportunities, cases"]
+        T2["relationship links"]
+        T3["module definitions<br/>schema registry"]
+        T4["activity log"]
+        T5["consent records"]
+        T6["source metadata<br/>raw import fields"]
+        T7["optional module tables"]
+    end
+
+    BE --> Importers["Importers<br/>SuiteCRM / CSV / JSON"]
+    BE --> Bundle[".ironcrm<br/>export/import"]
+    BE --> Modules["Optional modules<br/>scanner / calendar / email"]
 ```
-┌─────────────────────────────────────────┐
-│              Tauri Desktop Shell          │
-│  ┌─────────────┐  ┌───────────────────┐  │
-│  │  Frontend    │  │  Rust Backend     │  │
-│  │  (HTML/CSS/JS)│  │  (Axum + SQLite) │  │
-│  │              │  │                   │  │
-│  │  - Kanban    │  │  - CRUD API       │  │
-│  │  - Tables    │  │  - DID generation │  │
-│  │  - Scanner   │  │  - VC issuance    │  │
-│  │  - Export UI │  │  - llama.cpp      │  │
-│  └─────────────┘  │  - Bundle export   │  │
-│                    └───────────────────┘  │
-│                                           │
-│  ┌─────────────────────────────────────┐  │
-│  │           SQLite Database            │  │
-│  │  records(module, id, data)           │  │
-│  │  did_registry(record_id, did, doc)   │  │
-│  │  consent_receipts(contact_id, vc)    │  │
-│  └─────────────────────────────────────┘  │
-└─────────────────────────────────────────┘
-```
+
+### Architectural notes
+
+- The canonical schema should be IronCRM-native, not merely SuiteCRM tables copied forward.
+- External systems map into canonical records through import adapters.
+- Optional modules must write ordinary records, relationships, activities, or module-specific tables that the bundle format can describe.
+- Export/import round-trip tests are part of product correctness, not a nice-to-have.
 
 ## 10. Success Metrics
 
 | Metric | v1 Target | Rationale |
 |--------|-----------|-----------|
-| Time to first contact | < 30 seconds | Must feel instant for walk-up users |
-| SuiteCRM import success rate | > 95% of modules | Migration is the primary acquisition channel |
-| Scanner accuracy (business cards) | > 85% field-level | Must be reliable enough to trust |
-| Export bundle completeness | 100% records + relationships + consent | Portability promise is absolute |
-| App startup time | < 2 seconds | Desktop-native feel |
-| Memory usage | < 150 MB | Sub-Electron baseline |
+| Time to first contact | < 30 seconds | Walk-up users must see value immediately. |
+| SuiteCRM core import success | > 95% for accounts/contacts/opportunities and key relationships | Migration is the beachhead. |
+| CSV import completion | < 5 minutes for a typical 500-row contact CSV | Spreadsheet users need low friction. |
+| Bundle round-trip completeness | 100% for records, relationships, schema, custom fields, activities, consent records | This is the product promise. |
+| App startup time | < 2 seconds | Desktop-native expectation. |
+| Memory usage | < 150 MB without optional modules | Tauri/Rust advantage over Electron. |
+| Consent visibility | 100% of contacts show missing/valid/expired status | Makes audit workflows operational. |
 
 ## 11. Risks and Open Questions
 
-| Risk | Mitigation |
-|------|------------|
-| "Portable CRM" is a feature, not a purchase driver | Lead with "never lose your data" rather than tech specs. Demo the migration-from-competitor story in onboarding. |
-| SuiteCRM as sole import source is narrow | Add CSV import + generic JSON import in v1. Broaden connectors over time. |
-| Local-only limits collaboration | Defer multi-user. Solo operators are a large enough beachhead. |
-| DID/VC complexity leaks into UX | Abstract entirely. Users see "portable contact" and "consent record," not DIDs and VCs. |
-| llama.cpp bundling is heavy | Ship a minimal vision model (~2 GB). Make scanner skippable on first-run if storage is tight. |
-| Competitor response | Salesforce/HubSpot can't retrofit portability without architectural change. Moat is structural. |
+| Risk / Question | Mitigation / Direction |
+|-----------------|------------------------|
+| "Portable CRM" sounds like a feature, not a purchase driver. | Lead with concrete pain: never lose data, leave HubSpot/SuiteCRM safely, complete backup/restore. |
+| Core CRM quality is overshadowed by DID/AI novelty. | Keep v1 focused on CRUD, relationships, notes, import, export, restore. |
+| Canonical schema conflicts with SuiteCRM compatibility. | Preserve source metadata while mapping into a simpler IronCRM-native model. |
+| Consent features create legal overclaiming. | Say "supports audit/portability workflows" rather than promising compliance. |
+| Export format becomes undocumented internal backup. | Publish a versioned manifest and maintain round-trip/converter tests. |
+| Local-only limits collaboration. | Accept solo/small-team beachhead; defer sync. |
+| Scanner model is too heavy. | Ship scanner as optional module/download, not a default v1 dependency. |
+| Cryptographic identity complexity leaks into UX. | Begin with stable record IDs and workspace identity; defer DID/VC UI and signing. |
 
 ## 12. Milestones
 
 | Milestone | Scope | Outcome |
 |-----------|-------|---------|
-| **M1 — Foundation** (current) | SuiteCRM import, read-only viewer, scanner scaffold | Proof-of-concept complete ✓ |
-| **M2 — CRM Core** | CRUD for all modules, kanban board, search, activity log | Daily-drivable for a solo operator |
-| **M3 — Portable Engine** | DID anchoring, consent receipts, self-describing export/import | Portability promise delivered |
-| **M4 — Scanner Polish** | Bundled llama.cpp model, business card + document pipelines, >85% accuracy | Scanner as primary data-entry path |
-| **M5 — Launch** | Landing page, download flow, docs, SuiteCRM migration guide | Public availability |
-
+| **M1 - Foundation** | SuiteCRM import proof-of-concept, local viewer, module definitions, scanner scaffold | Existing proof-of-concept established. |
+| **M2 - Daily CRM Loop** | CRUD for core modules, relationships, notes/activity log, search, kanban for opportunities | Usable as a local CRM for a solo operator. |
+| **M3 - Canonical Import Layer** | SuiteCRM mapping, CSV import, JSON import, source metadata preservation, custom fields | External data lands in a stable IronCRM model. |
+| **M4 - Portable Bundle MVP** | `.ironcrm` export/import, manifest, schema, relationships, activities, consent records, hash checks | The portability promise is demonstrable by round-trip restore. |
+| **M5 - Consent and Audit UX** | Consent badges, legal-basis records, expiry dashboard, per-record audit export | Privacy-sensitive users can answer data/consent questions quickly. |
+| **M6 - Launch Hardening** | Packaging, migration guide, docs, onboarding, sample data, backup/restore tests | Public release candidate. |
+| **M7 - Optional Modules** | Scanner module, calendar/email experiments, plugin/module boundaries | Extension without bloating core CRM. |

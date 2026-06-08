@@ -1,4 +1,4 @@
-use crate::models::{ModuleSchema, ModuleDefinition, FieldDefinition, ScanMapping, field, field_default};
+use crate::models::{field, field_default, ModuleDefinition, ModuleSchema};
 
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct Account {

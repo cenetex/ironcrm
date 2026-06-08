@@ -1,3 +1,16 @@
-/target
-ironcrm.db
+target/
 src-tauri/target/
+
+# Local databases and generated app bundles
+*.db
+*.sqlite
+*.sqlite3
+*.app/
+
+# Build/package output
+dist/
+build/
+*.log
+
+# Local environment files
+.env

@@ -10,6 +10,7 @@ description = "Rust-native CRM engine, compatible with SuiteCRM databases"
 [features]
 default = []
 http-server = ["axum", "tower", "tower-http"]
+scanner-module = ["tempfile", "uuid"]
 
 [dependencies]
 # Async runtime
@@ -40,8 +41,8 @@ libsqlite3-sys = { version = "0.30", features = ["bundled"] }
 
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1", features = ["v4", "serde"] }
-tempfile = "3"
+tempfile = { version = "3", optional = true }
+uuid = { version = "1", features = ["v4", "serde"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"

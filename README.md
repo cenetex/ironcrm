@@ -1,21 +1,30 @@
 # IronCRM
 
-**Your relationships, your keys. A local-first CRM with portable identity.**
+**The Portable CRM. Your customer data, in a file you control.**
 
-IronCRM stores your contacts, deals, and activity on your machine. Every record carries a decentralized identifier that survives any export or migration. No accounts, no servers, no vendor lock-in.
+IronCRM is a local-first desktop CRM for small businesses that want useful relationship management without SaaS lock-in. It stores contacts, accounts, deals, notes, relationships, custom fields, and consent evidence locally, then exports everything in a complete `.ironcrm` bundle that can be restored into a fresh IronCRM instance.
 
 ## What it does
 
-- **5 core modules** — Accounts, Contacts, Leads, Opportunities, Cases — with table and kanban views
-- **Local-first engine** — SQLite-backed, Tauri shell, sub-150MB memory
-- **SuiteCRM import** — point at a MySQL instance, IronCRM maps modules, relationships, and custom fields into its canonical schema
-- **AI scanner** — photograph a business card, get a structured Contact (local llama.cpp vision, no cloud)
-- **Portable identity** — every record gets a `did:key` or `did:ens` on creation; consent receipts travel with the contact forever
-- **Self-describing exports** — one-click `.ironcrm` bundle: data + schema + relationships + consent, hash-verified on restore
+- **Core CRM modules** — Accounts, Contacts, Leads, Opportunities, and Cases.
+- **Local-first engine** — SQLite-backed Rust backend with a Tauri desktop shell.
+- **SuiteCRM migration** — maps SuiteCRM records, relationships, and custom fields into IronCRM's canonical model.
+- **CSV / JSON import path** — external data flows through a shared mapping layer.
+- **Complete exports** — one-click `.ironcrm` bundle with records, schemas, relationships, activities, custom fields, consent records, and manifest metadata.
+- **Consent-aware records** — contacts can carry legal-basis/consent evidence and expiry status.
+- **Optional modules** — scanner, calendar, email, and other features should extend the core without bloating v1.
+
+## Product focus
+
+The v1 promise is practical portability:
+
+> Import data, manage it locally, export it completely, and restore it somewhere clean.
+
+Advanced identity, signed credentials, CRDT sync, decentralized storage, and local AI scanning are valuable future layers, but they should not block the core CRM/export/restore loop.
 
 ## Quick start
 
-```
+```sh
 # Run the HTTP API (port 3000)
 cargo run --features http-server
 
@@ -26,36 +35,49 @@ DATABASE_URL=mysql://suitecrm:suitecrm@localhost:3306/suitecrm cargo run -- impo
 cd src-tauri && cargo run
 ```
 
-Open `http://localhost:3000` — the frontend is served from the same process.
+Open `http://localhost:3000` when running the HTTP server; the frontend is served from the same process.
 
 ## Architecture
 
-```
-┌─ Tauri Desktop Shell ───────────────────────────────┐
-│  Frontend (HTML/CSS/JS)     Rust Backend (Axum)       │
-│  ─ Table + Kanban views     ─ CRUD + import engine   │
-│  ─ Search + detail panel    ─ DID / VC issuance       │
-│  ─ Scanner UI               ─ llama.cpp vision        │
-│                              ─ Bundle export/import   │
-│                                                       │
-│  ┌─ SQLite ─────────────────────────────────────┐     │
-│  │  typed tables (accounts, contacts, …)         │     │
-│  │  records blob store (junction tables)         │     │
-│  │  module_definitions (schema registry)         │     │
-│  │  activity_log (audit trail)                   │     │
-│  │  did_registry (DID → record mapping)          │     │
-│  │  consent_receipts (Verifiable Credentials)    │     │
-│  └──────────────────────────────────────────────┘     │
-└──────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph App["Tauri Desktop App"]
+        FE["Frontend<br/>HTML/CSS/JS"]
+        BE["Rust Backend<br/>Axum + sqlx"]
+    end
+
+    FE --> BE
+    BE --> SQLite
+
+    subgraph SQLite["SQLite Database"]
+        direction TB
+        T1["canonical tables<br/>accounts, contacts, leads,<br/>opportunities, cases"]
+        T2["relationship links"]
+        T3["module definitions<br/>schema registry"]
+        T4["activity log"]
+        T5["consent records"]
+        T6["source metadata<br/>raw import fields"]
+        T7["optional module tables"]
+    end
+
+    BE --> Importers["Importers<br/>SuiteCRM / CSV / JSON"]
+    BE --> Bundle[".ironcrm<br/>export/import"]
+    BE --> Modules["Optional modules<br/>scanner / calendar / email"]
 ```
 
 ## Product principles
 
-1. **Data outlasts the tool.** Every record has a persistent, portable identifier. Export always works, always complete.
-2. **No lock-in. Not even soft.** The database is a file. Export is one click. The schema is self-describing.
-3. **Consent is a first-class object.** Every contact carries a Verifiable Credential proving the legal basis for holding it. GDPR/CCPA audit-ready.
-4. **Local AI, not cloud AI.** Scanner runs llama.cpp on-device. Sensitive documents never leave the machine.
-5. **Desktop-native, small footprint.** Tauri + Rust, < 2s startup, < 150MB RAM.
+1. **Data outlasts the tool.** CRM data should remain meaningful after it leaves the app.
+2. **Export is a core workflow.** Export must be complete, one-click, documented, and tested by restore.
+3. **Local-first before networked.** IronCRM should be useful with no account, no server, and no internet connection.
+4. **Boring CRM beats clever infrastructure.** Contacts, accounts, notes, search, and pipeline management come first.
+5. **Consent is operational.** Users should know which contacts have consent/legal-basis evidence and what is expiring.
+6. **Modules extend the core.** Scanner and other extras should feed the same canonical schema and export format.
+
+## Docs
+
+- [Product Requirements](./PRD.md)
+- [Roadmap](./ROADMAP.md)
 
 ## License
 
