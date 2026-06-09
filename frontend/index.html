@@ -110,6 +110,22 @@
 
   <div id="toast-region"></div>
 
+  <div id="record-modal" class="modal hidden">
+    <div class="modal-backdrop" onclick="closeRecordModal()"></div>
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <h3 id="modal-title">New Record</h3>
+        <button class="icon-btn" type="button" aria-label="Close" onclick="closeRecordModal()"><span class="icon icon-close"></span></button>
+      </div>
+      <div id="modal-form" class="modal-form"></div>
+      <div class="modal-footer">
+        <button class="tool-btn" onclick="closeRecordModal()">Cancel</button>
+        <button class="tool-btn primary-btn" id="modal-save-btn" onclick="saveRecordModal()">Save</button>
+      </div>
+    </div>
+  </div>
+
+
   <script src="app.js?v=6"></script>
 </body>
 </html>

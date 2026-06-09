@@ -71,6 +71,41 @@ var api = {
     }
     var res = await fetch(path);
     return res.json();
+  },
+  post: async function(path, body) {
+    if (isTauri && invoke) throw new Error("POST not yet in Tauri bindings");
+    var res = await fetch(path, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      var err = await res.json().catch(function() { return {error: res.statusText}; });
+      throw new Error(err.error || res.statusText);
+    }
+    return res.json();
+  },
+  put: async function(path, body) {
+    if (isTauri && invoke) throw new Error("PUT not yet in Tauri bindings");
+    var res = await fetch(path, {
+      method: "PUT",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) {
+      var err = await res.json().catch(function() { return {error: res.statusText}; });
+      throw new Error(err.error || res.statusText);
+    }
+    return res.json();
+  },
+  del: async function(path) {
+    if (isTauri && invoke) throw new Error("DELETE not yet in Tauri bindings");
+    var res = await fetch(path, { method: "DELETE" });
+    if (!res.ok) {
+      var err = await res.json().catch(function() { return {error: res.statusText}; });
+      throw new Error(err.error || res.statusText);
+    }
+    return res.json();
   }
 };
 
@@ -544,12 +579,79 @@ function bindControls() {
   });
 
   document.getElementById('new-record-btn').addEventListener('click', function() {
-    toast('Quick create is the next move.');
+    if (currentModule) openNewRecordModal(currentModule);
+    else toast("Select a module first.");
   });
 
   document.getElementById('filter-btn').addEventListener('click', function() {
     toast('Saved filters and advanced slices are next.');
   });
+}
+
+// ── Record modal (create/edit) ──
+var editingRecordId = null;
+var editingModule = null;
+
+function renderFormFields(module, existing) {
+  var def = moduleDefs[module];
+  if (!def) return "<p>No definition for this module.</p>";
+  var skip = ["id","date_entered","date_modified","modified_user_id","created_by","deleted","id_c"];
+  var fields = def.fields.filter(function(f) { return skip.indexOf(f.name) === -1; });
+  return fields.map(function(f) {
+    var value = (existing && existing[f.name]) || "";
+    if (f.name.indexOf("description") >= 0 || f.name === "work_log") {
+      return "<label>" + titleize(f.name) + "<textarea name=\"" + f.name + "\">" + value + "</textarea></label>";
+    }
+    return "<label>" + titleize(f.name) + "<input name=\"" + f.name + "\" value=\"" + escapeAttr(value) + "\" placeholder=\"" + titleize(f.name) + "\"></label>";
+  }).join("");
+}
+
+function escapeAttr(s) {
+  return String(s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function openNewRecordModal(module) {
+  editingRecordId = null;
+  editingModule = module;
+  document.getElementById("modal-title").textContent = "New " + (moduleDefs[module] ? moduleDefs[module].label : titleize(module));
+  document.getElementById("modal-form").innerHTML = renderFormFields(module, null);
+  document.getElementById("record-modal").classList.remove("hidden");
+}
+
+function openEditRecordModal(module, record) {
+  editingRecordId = record.id;
+  editingModule = module;
+  document.getElementById("modal-title").textContent = "Edit " + (moduleDefs[module] ? moduleDefs[module].label : titleize(module));
+  document.getElementById("modal-form").innerHTML = renderFormFields(module, record);
+  document.getElementById("record-modal").classList.remove("hidden");
+}
+
+function closeRecordModal() {
+  document.getElementById("record-modal").classList.add("hidden");
+  editingRecordId = null;
+  editingModule = null;
+}
+
+async function saveRecordModal() {
+  if (!editingModule) return;
+  var fields = {};
+  var inputs = document.querySelectorAll("#modal-form input, #modal-form textarea, #modal-form select");
+  for (var i = 0; i < inputs.length; i += 1) {
+    if (inputs[i].value) fields[inputs[i].name] = inputs[i].value;
+  }
+  try {
+    if (editingRecordId) {
+      await api.put("/api/v1/" + editingModule + "/" + editingRecordId, fields);
+      toast("Updated");
+    } else {
+      var result = await api.post("/api/v1/" + editingModule, fields);
+      toast("Created");
+    }
+    closeRecordModal();
+    selectModule(currentModule);
+  } catch (e) {
+    toast("Error: " + e.message);
+  }
 }
 
 async function init() {
@@ -602,5 +704,10 @@ window.openDetail = openDetail;
 window.scrollToBoardStage = scrollToBoardStage;
 window.toggleStageSection = toggleStageSection;
 window.toast = toast;
+window.openNewRecordModal = openNewRecordModal;
+window.openEditRecordModal = openEditRecordModal;
+window.closeRecordModal = closeRecordModal;
+window.saveRecordModal = saveRecordModal;
+
 
 init();

@@ -1,10 +1,7 @@
 use crate::api;
 use crate::db;
 use anyhow::Result;
-use axum::{routing::get, Router};
-
-#[cfg(feature = "scanner-module")]
-use axum::routing::post;
+use axum::{routing::{delete, get, post, put}, Router};
 use std::path::PathBuf;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
@@ -27,7 +24,10 @@ pub async fn run_server(db_path: &str, port: u16) -> Result<()> {
         .route("/api/v1/modules", get(api::list_modules))
         .route("/api/v1/{module}/definition", get(api::get_module_definition))
         .route("/api/v1/{module}", get(api::list_records))
-        .route("/api/v1/{module}/{id}", get(api::get_record));
+        .route("/api/v1/{module}", post(api::create_record))
+        .route("/api/v1/{module}/{id}", get(api::get_record))
+        .route("/api/v1/{module}/{id}", put(api::update_record))
+        .route("/api/v1/{module}/{id}", delete(api::delete_record));
 
     #[cfg(feature = "scanner-module")]
     {

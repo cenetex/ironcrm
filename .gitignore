@@ -11,6 +11,7 @@ src-tauri/target/
 dist/
 build/
 *.log
+*.bak
 
 # Local environment files
 .env

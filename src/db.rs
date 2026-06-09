@@ -9,7 +9,7 @@ use sqlx::{Column, Row};
 pub async fn connect_sqlite(path: &str) -> Result<SqlitePool> {
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
-        .connect(&format!("sqlite:{}", path))
+        .connect(&format!("sqlite:///{}", path.strip_prefix("/").unwrap_or(path)))
         .await?;
     init_schema(&pool).await?;
     migrate_blob_to_typed(&pool).await?;
@@ -392,6 +392,111 @@ pub async fn discover_modules_sqlite(pool: &SqlitePool) -> Result<Vec<String>> {
     Ok(modules)
 }
 
+
+// ── Create / Update / Delete ──
+
+/// Create a record: typed table + blob store. Returns the generated UUID.
+pub async fn create_record(
+    pool: &SqlitePool,
+    module: &str,
+    fields: &serde_json::Map<String, serde_json::Value>,
+) -> Result<String> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+    let mut data = fields.clone();
+    data.insert("id".into(), serde_json::Value::String(id.clone()));
+    if !data.contains_key("date_entered") {
+        data.insert("date_entered".into(), serde_json::Value::String(now.clone()));
+    }
+    if !data.contains_key("date_modified") {
+        data.insert("date_modified".into(), serde_json::Value::String(now));
+    }
+    if !data.contains_key("deleted") {
+        data.insert("deleted".into(), serde_json::Value::String("0".into()));
+    }
+
+    // Blob store
+    let json = serde_json::to_string(&data)?;
+    sqlx::query("INSERT OR REPLACE INTO records (module, id, data) VALUES (?, ?, ?)")
+        .bind(module)
+        .bind(&id)
+        .bind(&json)
+        .execute(pool)
+        .await?;
+
+    // Typed table
+    if crate::module::has_definition(pool, module).await? {
+        upsert_typed_row(pool, module, &id, &data).await?;
+    }
+
+    Ok(id)
+}
+
+/// Update a record: merges fields, sets date_modified, updates typed + blob.
+pub async fn update_record(
+    pool: &SqlitePool,
+    module: &str,
+    id: &str,
+    fields: &serde_json::Map<String, serde_json::Value>,
+) -> Result<bool> {
+    let existing = get_module_record(pool, module, id).await?;
+    let mut record = match existing {
+        Some(r) => r,
+        None => return Ok(false),
+    };
+
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    record.insert("date_modified".into(), serde_json::Value::String(now));
+
+    for (key, val) in fields {
+        record.insert(key.clone(), val.clone());
+    }
+    record.insert("id".into(), serde_json::Value::String(id.to_string()));
+
+    // Blob store
+    let json = serde_json::to_string(&record)?;
+    sqlx::query("INSERT OR REPLACE INTO records (module, id, data) VALUES (?, ?, ?)")
+        .bind(module)
+        .bind(id)
+        .bind(&json)
+        .execute(pool)
+        .await?;
+
+    // Typed table
+    if crate::module::has_definition(pool, module).await? {
+        upsert_typed_row(pool, module, id, &record).await?;
+    }
+
+    Ok(true)
+}
+
+/// Soft-delete a record by setting deleted=1.
+pub async fn delete_record(pool: &SqlitePool, module: &str, id: &str) -> Result<bool> {
+    let existing = get_module_record(pool, module, id).await?;
+    let mut record = match existing {
+        Some(r) => r,
+        None => return Ok(false),
+    };
+
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    record.insert("deleted".into(), serde_json::Value::String("1".into()));
+    record.insert("date_modified".into(), serde_json::Value::String(now));
+
+    let json = serde_json::to_string(&record)?;
+    sqlx::query("INSERT OR REPLACE INTO records (module, id, data) VALUES (?, ?, ?)")
+        .bind(module)
+        .bind(id)
+        .bind(&json)
+        .execute(pool)
+        .await?;
+
+    if crate::module::has_definition(pool, module).await? {
+        upsert_typed_row(pool, module, id, &record).await?;
+    }
+
+    Ok(true)
+}
 // ── SQLite queries (typed-table-aware) ──
 
 pub async fn query_module(

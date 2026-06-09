@@ -209,3 +209,75 @@ pub async fn get_module_definition(
             Json(ErrorResponse { error: format!("No definition for module '{}'", module) }),
         ))
 }
+
+// ── Create / Update / Delete handlers ──
+
+#[derive(Serialize)]
+pub struct CreateRecordResponse {
+    pub id: String,
+    pub status: &'static str,
+}
+
+pub async fn create_record(
+    State(pool): State<SqlitePool>,
+    Path(module): Path<String>,
+    Json(fields): Json<Map<String, Value>>,
+) -> Result<Json<CreateRecordResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let has_def = crate::module::has_definition(&pool, &module).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() }))
+    })?;
+    if !has_def {
+        return Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: format!("Unknown module '{}'", module) })));
+    }
+
+    let id = crate::db::create_record(&pool, &module, &fields).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() }))
+    })?;
+
+    Ok(Json(CreateRecordResponse { id, status: "ok" }))
+}
+
+pub async fn update_record(
+    State(pool): State<SqlitePool>,
+    Path((module, id)): Path<(String, String)>,
+    Json(fields): Json<Map<String, Value>>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let has_def = crate::module::has_definition(&pool, &module).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() }))
+    })?;
+    if !has_def {
+        return Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: format!("Unknown module '{}'", module) })));
+    }
+
+    let updated = crate::db::update_record(&pool, &module, &id, &fields).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() }))
+    })?;
+
+    if !updated {
+        return Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: format!("Record '{}' not found in '{}'", id, module) })));
+    }
+
+    Ok(Json(serde_json::json!({"status": "ok", "id": id})))
+}
+
+pub async fn delete_record(
+    State(pool): State<SqlitePool>,
+    Path((module, id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let has_def = crate::module::has_definition(&pool, &module).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() }))
+    })?;
+    if !has_def {
+        return Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: format!("Unknown module '{}'", module) })));
+    }
+
+    let deleted = crate::db::delete_record(&pool, &module, &id).await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() }))
+    })?;
+
+    if !deleted {
+        return Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: format!("Record '{}' not found in '{}'", id, module) })));
+    }
+
+    Ok(Json(serde_json::json!({"status": "ok", "id": id})))
+}
