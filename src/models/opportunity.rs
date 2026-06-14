@@ -36,6 +36,7 @@ impl ModuleSchema for Opportunity {
             ].into_iter().map(String::from).collect()),
             list_columns: vec!["name","account_id","sales_stage","amount","date_closed"].into_iter().map(String::from).collect(),
             detail_summary: vec!["sales_stage","amount","date_closed"].into_iter().map(String::from).collect(),
+            primary_fields: vec!["name","account_id","sales_stage","amount","date_closed","next_step","probability","description"].into_iter().map(String::from).collect(),
             fields: vec![
                 field("id","TEXT",0), field("name","TEXT",1),
                 field("date_entered","TEXT",2), field("date_modified","TEXT",3),

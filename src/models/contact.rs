@@ -50,6 +50,7 @@ impl ModuleSchema for Contact {
             board_field: None, board_stages: None,
             list_columns: vec!["full_name","title","account_id","email1","phone_work"].into_iter().map(String::from).collect(),
             detail_summary: vec!["title","email1","phone_work"].into_iter().map(String::from).collect(),
+            primary_fields: vec!["first_name","last_name","title","account_id","email1","phone_work","phone_mobile","description"].into_iter().map(String::from).collect(),
             fields: vec![
                 field("id","TEXT",0),
                 field("date_entered","TEXT",1), field("date_modified","TEXT",2),

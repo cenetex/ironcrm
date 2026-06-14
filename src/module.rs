@@ -22,6 +22,8 @@ pub struct ModuleDefinition {
     #[serde(default)]
     pub detail_summary: Vec<String>,
     #[serde(default)]
+    pub primary_fields: Vec<String>,
+    #[serde(default)]
     pub fields: Vec<FieldDefinition>,
     #[serde(default)]
     pub scan_mapping: Option<ScanMapping>,

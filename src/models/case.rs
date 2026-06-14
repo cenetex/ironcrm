@@ -28,6 +28,7 @@ impl ModuleSchema for Case {
             board_field: None, board_stages: None,
             list_columns: vec!["name","account_id","priority","status","type"].into_iter().map(String::from).collect(),
             detail_summary: vec!["priority","status","type"].into_iter().map(String::from).collect(),
+            primary_fields: vec!["name","account_id","priority","status","type","resolution","work_log","description"].into_iter().map(String::from).collect(),
             fields: vec![
                 field("id","TEXT",0), field("name","TEXT",1),
                 field("date_entered","TEXT",2), field("date_modified","TEXT",3),

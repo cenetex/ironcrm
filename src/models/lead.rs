@@ -52,6 +52,7 @@ impl ModuleSchema for Lead {
             board_stages: Some(vec!["New","Assigned","In Process","Converted"].into_iter().map(String::from).collect()),
             list_columns: vec!["full_name","account_name","status","lead_source","email1"].into_iter().map(String::from).collect(),
             detail_summary: vec!["status","lead_source","account_name"].into_iter().map(String::from).collect(),
+            primary_fields: vec!["first_name","last_name","account_name","status","lead_source","email1","phone_work","description"].into_iter().map(String::from).collect(),
             fields: vec![
                 field("id","TEXT",0),
                 field("date_entered","TEXT",1), field("date_modified","TEXT",2),

@@ -45,6 +45,7 @@ impl ModuleSchema for Account {
             board_field: None, board_stages: None,
             list_columns: vec!["name","industry","phone_office","billing_address_city","website"].into_iter().map(String::from).collect(),
             detail_summary: vec!["industry","phone_office","website"].into_iter().map(String::from).collect(),
+            primary_fields: vec!["name","industry","account_type","phone_office","email1","website","billing_address_city","description"].into_iter().map(String::from).collect(),
             fields: vec![
                 field("id","TEXT",0),
                 field("name","TEXT",1),
