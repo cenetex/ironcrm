@@ -1,4 +1,6 @@
-use crate::models::{ModuleSchema, ModuleDefinition, ScanMapping, field, field_default, field_scan, scan};
+use crate::models::{
+    ModuleDefinition, ModuleSchema, ScanMapping, field, field_default, field_scan, scan,
+};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
@@ -45,43 +47,88 @@ pub struct Contact {
 impl ModuleSchema for Contact {
     fn definition() -> ModuleDefinition {
         ModuleDefinition {
-            module: "contacts".into(), label: "Contact".into(), label_plural: "Contacts".into(),
-            icon: Some("C".into()), default_view: "table".into(),
-            board_field: None, board_stages: None,
-            list_columns: vec!["full_name","title","account_id","email1","phone_work"].into_iter().map(String::from).collect(),
-            detail_summary: vec!["title","email1","phone_work"].into_iter().map(String::from).collect(),
+            module: "contacts".into(),
+            label: "Contact".into(),
+            label_plural: "Contacts".into(),
+            icon: Some("C".into()),
+            default_view: "table".into(),
+            board_field: None,
+            board_stages: None,
+            list_columns: vec!["full_name", "title", "account_id", "email1", "phone_work"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            detail_summary: vec!["title", "email1", "phone_work"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            primary_fields: vec![
+                "first_name",
+                "last_name",
+                "title",
+                "account_id",
+                "email1",
+                "phone_work",
+                "phone_mobile",
+                "description",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
             fields: vec![
-                field("id","TEXT",0),
-                field("date_entered","TEXT",1), field("date_modified","TEXT",2),
-                field("modified_user_id","TEXT",3), field("created_by","TEXT",4),
-                field("description","TEXT",5), field_default("deleted","INTEGER",6,"0"),
-                field("assigned_user_id","TEXT",7),
-                field("salutation","TEXT",8), field("first_name","TEXT",9),
-                field("last_name","TEXT",10), field_scan("title","TEXT",11,"title"),
-                field("department","TEXT",12), field_default("do_not_call","INTEGER",13,"0"),
-                field("phone_home","TEXT",14), field("phone_mobile","TEXT",15),
-                field_scan("phone_work","TEXT",16,"phone"), field("phone_other","TEXT",17),
-                field("phone_fax","TEXT",18), field_scan("email1","TEXT",19,"email"),
-                field("email2","TEXT",20),
-                field("primary_address_street","TEXT",21), field("primary_address_city","TEXT",22),
-                field("primary_address_state","TEXT",23), field("primary_address_postalcode","TEXT",24),
-                field("primary_address_country","TEXT",25),
-                field("alt_address_street","TEXT",26), field("alt_address_city","TEXT",27),
-                field("alt_address_state","TEXT",28), field("alt_address_postalcode","TEXT",29),
-                field("alt_address_country","TEXT",30),
-                field("assistant","TEXT",31), field("assistant_phone","TEXT",32),
-                field("lead_source","TEXT",33), field("reports_to_id","TEXT",34),
-                field("birthdate","TEXT",35), field("account_id","TEXT",36),
+                field("id", "TEXT", 0),
+                field("date_entered", "TEXT", 1),
+                field("date_modified", "TEXT", 2),
+                field("modified_user_id", "TEXT", 3),
+                field("created_by", "TEXT", 4),
+                field("description", "TEXT", 5),
+                field_default("deleted", "INTEGER", 6, "0"),
+                field("assigned_user_id", "TEXT", 7),
+                field("salutation", "TEXT", 8),
+                field("first_name", "TEXT", 9),
+                field("last_name", "TEXT", 10),
+                field_scan("title", "TEXT", 11, "title"),
+                field("department", "TEXT", 12),
+                field_default("do_not_call", "INTEGER", 13, "0"),
+                field("phone_home", "TEXT", 14),
+                field("phone_mobile", "TEXT", 15),
+                field_scan("phone_work", "TEXT", 16, "phone"),
+                field("phone_other", "TEXT", 17),
+                field("phone_fax", "TEXT", 18),
+                field_scan("email1", "TEXT", 19, "email"),
+                field("email2", "TEXT", 20),
+                field("primary_address_street", "TEXT", 21),
+                field("primary_address_city", "TEXT", 22),
+                field("primary_address_state", "TEXT", 23),
+                field("primary_address_postalcode", "TEXT", 24),
+                field("primary_address_country", "TEXT", 25),
+                field("alt_address_street", "TEXT", 26),
+                field("alt_address_city", "TEXT", 27),
+                field("alt_address_state", "TEXT", 28),
+                field("alt_address_postalcode", "TEXT", 29),
+                field("alt_address_country", "TEXT", 30),
+                field("assistant", "TEXT", 31),
+                field("assistant_phone", "TEXT", 32),
+                field("lead_source", "TEXT", 33),
+                field("reports_to_id", "TEXT", 34),
+                field("birthdate", "TEXT", 35),
+                field("account_id", "TEXT", 36),
             ],
             scan_mapping: Some(ScanMapping {
                 sources: HashMap::from([
-                    scan("title","title"), scan("phone","phone_work"),
-                    scan("email","email1"), scan("website","website"),
-                    scan("company","account_name"),
+                    scan("title", "title"),
+                    scan("phone", "phone_work"),
+                    scan("email", "email1"),
+                    scan("website", "website"),
+                    scan("company", "account_name"),
                 ]),
                 split_name: true,
             }),
-            indexes: vec!["last_name,first_name".into(),"account_id".into(),"deleted".into()],
+            indexes: vec![
+                "last_name,first_name".into(),
+                "account_id".into(),
+                "deleted".into(),
+            ],
         }
     }
 }

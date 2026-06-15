@@ -1,12 +1,12 @@
-/// Holonet — a tamper-evident hash-linked event chain for license operations.
-///
-/// Every event (issue, revoke, extend, verify) appends a block to the chain.
-/// Each block contains the previous block's hash, a timestamp, the event
-/// payload, and a nonce. The chain can be verified independently — any
-/// tamperer would need to rehash every subsequent block.
-///
-/// This is *not* a blockchain (no consensus, no mining). It is a
-/// hash-append log that makes the license history independently verifiable.
+//! Holonet — a tamper-evident hash-linked event chain for license operations.
+//!
+//! Every event (issue, revoke, extend, verify) appends a block to the chain.
+//! Each block contains the previous block's hash, a timestamp, the event
+//! payload, and a nonce. The chain can be verified independently — any
+//! tamperer would need to rehash every subsequent block.
+//!
+//! This is *not* a blockchain (no consensus, no mining). It is a
+//! hash-append log that makes the license history independently verifiable.
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -21,9 +21,7 @@ pub enum HoloEvent {
         label: Option<String>,
     },
     /// A license key was revoked.
-    Revoke {
-        key_hash: String,
-    },
+    Revoke { key_hash: String },
     /// A license was extended / re-issued.
     Extend {
         key_hash: String,
@@ -54,7 +52,7 @@ impl HoloBlock {
         hasher.update(self.index.to_le_bytes());
         hasher.update(self.timestamp.as_bytes());
         hasher.update(self.previous_hash.as_bytes());
-        hasher.update(&serde_json::to_vec(&self.event).unwrap_or_default());
+        hasher.update(serde_json::to_vec(&self.event).unwrap_or_default());
         hasher.update(self.nonce.to_le_bytes());
         hex::encode(hasher.finalize())
     }

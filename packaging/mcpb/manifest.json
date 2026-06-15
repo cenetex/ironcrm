@@ -1,0 +1,87 @@
+{
+  "manifest_version": "0.4",
+  "name": "ironcrm",
+  "display_name": "IronCRM",
+  "version": "0.1.0",
+  "description": "Local-first CRM workspace access for Claude Desktop and other MCP clients.",
+  "long_description": "IronCRM exposes the local CRM database as a stdio MCP server. Clients can inspect modules, list and search records, update records, add notes, link records, detect local SuiteCRM configuration, and export a complete workspace bundle.",
+  "author": {
+    "name": "IronCRM"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cenetex/ironcrm.git"
+  },
+  "server": {
+    "type": "binary",
+    "entry_point": "server/ironcrm",
+    "mcp_config": {
+      "command": "${__dirname}/server/ironcrm",
+      "args": ["mcp"],
+      "env": {
+        "LOCAL_DB_PATH": "${user_config.local_db_path}"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "ironcrm_workspace_summary",
+      "description": "Summarize the local IronCRM workspace, including modules and record counts."
+    },
+    {
+      "name": "ironcrm_list_modules",
+      "description": "List CRM modules and field definitions."
+    },
+    {
+      "name": "ironcrm_list_records",
+      "description": "List records from one module."
+    },
+    {
+      "name": "ironcrm_search_records",
+      "description": "Search records and note activity across CRM modules."
+    },
+    {
+      "name": "ironcrm_get_record",
+      "description": "Get one record with relationships and activity timeline."
+    },
+    {
+      "name": "ironcrm_create_record",
+      "description": "Create a local IronCRM record."
+    },
+    {
+      "name": "ironcrm_update_record",
+      "description": "Update fields on a local IronCRM record."
+    },
+    {
+      "name": "ironcrm_add_note",
+      "description": "Add an activity note to a record."
+    },
+    {
+      "name": "ironcrm_link_records",
+      "description": "Create a relationship between two records."
+    },
+    {
+      "name": "ironcrm_detect_suitecrm",
+      "description": "Detect a local SuiteCRM config.php and return a read-only connection summary."
+    },
+    {
+      "name": "ironcrm_export_workspace",
+      "description": "Export a complete IronCRM workspace bundle as JSON."
+    }
+  ],
+  "tools_generated": false,
+  "keywords": ["crm", "suitecrm", "local-first", "mcp"],
+  "license": "MIT",
+  "compatibility": {
+    "platforms": ["darwin"]
+  },
+  "user_config": {
+    "local_db_path": {
+      "type": "file",
+      "title": "IronCRM database",
+      "description": "Optional path to an IronCRM SQLite database. Leave blank to use the default desktop workspace.",
+      "required": false,
+      "default": ""
+    }
+  }
+}

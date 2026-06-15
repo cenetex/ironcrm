@@ -1,7 +1,10 @@
 use crate::api;
 use crate::db;
 use anyhow::Result;
-use axum::{routing::{delete, get, post, put}, Router};
+use axum::{
+    Router,
+    routing::{delete, get, post, put},
+};
 use std::path::PathBuf;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
@@ -22,18 +25,38 @@ pub async fn run_server(db_path: &str, port: u16) -> Result<()> {
     let mut app = Router::new()
         .route("/health", get(api::health))
         .route("/api/v1/modules", get(api::list_modules))
-        .route("/api/v1/{module}/definition", get(api::get_module_definition))
+        .route("/api/v1/search", get(api::search_records))
+        .route("/api/v1/suitecrm/detect", get(api::detect_suitecrm))
+        .route("/api/v1/suitecrm/connect", post(api::connect_suitecrm))
+        .route("/api/v1/odoo/detect", get(api::detect_odoo))
+        .route("/api/v1/odoo/connect", post(api::connect_odoo))
+        .route("/api/v1/export", get(api::export_workspace))
+        .route("/api/v1/restore", post(api::restore_workspace))
+        .route("/api/v1/restore/exact", post(api::restore_workspace_exact))
+        .route("/api/v1/links/{link_id}", delete(api::delete_record_link))
+        .route(
+            "/api/v1/{module}/definition",
+            get(api::get_module_definition),
+        )
         .route("/api/v1/{module}", get(api::list_records))
         .route("/api/v1/{module}", post(api::create_record))
         .route("/api/v1/{module}/{id}", get(api::get_record))
         .route("/api/v1/{module}/{id}", put(api::update_record))
-        .route("/api/v1/{module}/{id}", delete(api::delete_record));
+        .route("/api/v1/{module}/{id}", delete(api::delete_record))
+        .route("/api/v1/{module}/{id}/notes", post(api::add_record_note))
+        .route("/api/v1/{module}/{id}/links", post(api::link_record));
 
     #[cfg(feature = "scanner-module")]
     {
         app = app
-            .route("/api/v1/modules/scanner/scan", post(api::scan_image_endpoint))
-            .route("/api/v1/modules/scanner/{module}/import", post(api::import_scan_endpoint));
+            .route(
+                "/api/v1/modules/scanner/scan",
+                post(api::scan_image_endpoint),
+            )
+            .route(
+                "/api/v1/modules/scanner/{module}/import",
+                post(api::import_scan_endpoint),
+            );
     }
 
     if frontend_dir.exists() {

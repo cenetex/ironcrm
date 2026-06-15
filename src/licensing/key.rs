@@ -28,7 +28,9 @@ impl LicenseKey {
 
     /// Generate a new random key.
     pub fn generate() -> Self {
-        LicenseKey { secret: rand::random() }
+        LicenseKey {
+            secret: rand::random(),
+        }
     }
 
     pub fn secret_bytes(&self) -> &[u8; 8] {
@@ -43,7 +45,14 @@ impl LicenseKey {
 impl fmt::Display for LicenseKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let h = self.secret_hex().to_uppercase();
-        write!(f, "IRON-{}-{}-{}-{}", &h[0..4], &h[4..8], &h[8..12], &h[12..16])
+        write!(
+            f,
+            "IRON-{}-{}-{}-{}",
+            &h[0..4],
+            &h[4..8],
+            &h[8..12],
+            &h[12..16]
+        )
     }
 }
 

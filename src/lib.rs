@@ -1,7 +1,8 @@
 pub mod db;
 pub mod licensing;
-pub mod module;
+pub mod mcp;
 pub mod models;
+pub mod module;
 
 #[cfg(feature = "scanner-module")]
 pub mod vision;

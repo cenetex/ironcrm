@@ -31,6 +31,12 @@ cargo run --features http-server
 # Import from SuiteCRM MySQL
 DATABASE_URL=mysql://suitecrm:suitecrm@localhost:3306/suitecrm cargo run -- import
 
+# Run as a local MCP server for Claude Desktop / Codex
+cargo run -- mcp
+
+# Package the MCP server for Claude Desktop
+./scripts/package-mcpb.sh
+
 # Desktop app (Tauri)
 cd src-tauri && cargo run
 ```
@@ -78,6 +84,7 @@ graph TD
 
 - [Product Requirements](./PRD.md)
 - [Roadmap](./ROADMAP.md)
+- [MCP server setup](./MCP.md)
 
 ## License
 

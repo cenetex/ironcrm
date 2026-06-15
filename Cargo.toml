@@ -17,7 +17,7 @@ scanner-module = ["tempfile"]
 tokio = { version = "1", features = ["full"] }
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio", "mysql", "sqlite", "migrate"] }
+sqlx = { version = "0.8", features = ["runtime-tokio", "mysql", "postgres", "sqlite", "migrate"] }
 
 # HTTP server (optional, plugin-style)
 axum = { version = "0.8", features = ["multipart"], optional = true }
