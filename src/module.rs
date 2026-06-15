@@ -31,7 +31,9 @@ pub struct ModuleDefinition {
     pub indexes: Vec<String>,
 }
 
-fn default_view() -> String { "table".into() }
+fn default_view() -> String {
+    "table".into()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldDefinition {
@@ -48,7 +50,9 @@ pub struct FieldDefinition {
     pub default_value: Option<String>,
 }
 
-fn default_field_type() -> String { "TEXT".into() }
+fn default_field_type() -> String {
+    "TEXT".into()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ScanMapping {
@@ -103,12 +107,11 @@ pub async fn seed_builtin_definitions(pool: &SqlitePool) -> Result<()> {
 }
 
 pub async fn get_definition(pool: &SqlitePool, module: &str) -> Result<Option<ModuleDefinition>> {
-    let row: Option<(String,)> = sqlx::query_as(
-        "SELECT def_json FROM module_definitions WHERE module = ?",
-    )
-    .bind(module)
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT def_json FROM module_definitions WHERE module = ?")
+            .bind(module)
+            .fetch_optional(pool)
+            .await?;
 
     Ok(match row {
         Some((json,)) => Some(serde_json::from_str(&json)?),
@@ -117,11 +120,10 @@ pub async fn get_definition(pool: &SqlitePool, module: &str) -> Result<Option<Mo
 }
 
 pub async fn get_all_definitions(pool: &SqlitePool) -> Result<Vec<ModuleDefinition>> {
-    let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT def_json FROM module_definitions ORDER BY module",
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT def_json FROM module_definitions ORDER BY module")
+            .fetch_all(pool)
+            .await?;
 
     let mut defs = Vec::new();
     for (json,) in rows {
@@ -131,12 +133,10 @@ pub async fn get_all_definitions(pool: &SqlitePool) -> Result<Vec<ModuleDefiniti
 }
 
 pub async fn has_definition(pool: &SqlitePool, module: &str) -> Result<bool> {
-    let row: Option<(i64,)> = sqlx::query_as(
-        "SELECT 1 FROM module_definitions WHERE module = ?",
-    )
-    .bind(module)
-    .fetch_optional(pool)
-    .await?;
+    let row: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM module_definitions WHERE module = ?")
+        .bind(module)
+        .fetch_optional(pool)
+        .await?;
 
     Ok(row.is_some())
 }
@@ -152,16 +152,20 @@ pub async fn typed_column_names(pool: &SqlitePool, module: &str) -> Result<Vec<S
 // ── Schema generation ──
 
 pub fn gen_create_table_sql(def: &ModuleDefinition) -> String {
-    let cols: Vec<String> = def.fields.iter().map(|f| {
-        let mut col = format!("\"{}\" {}", f.name, f.field_type);
-        if f.name == "id" {
-            col.push_str(" PRIMARY KEY");
-        }
-        if let Some(ref dv) = f.default_value {
-            col.push_str(&format!(" DEFAULT {}", dv));
-        }
-        col
-    }).collect();
+    let cols: Vec<String> = def
+        .fields
+        .iter()
+        .map(|f| {
+            let mut col = format!("\"{}\" {}", f.name, f.field_type);
+            if f.name == "id" {
+                col.push_str(" PRIMARY KEY");
+            }
+            if let Some(ref dv) = f.default_value {
+                col.push_str(&format!(" DEFAULT {}", dv));
+            }
+            col
+        })
+        .collect();
     format!(
         "CREATE TABLE IF NOT EXISTS {} (\n  {}\n)",
         def.module,
@@ -170,16 +174,23 @@ pub fn gen_create_table_sql(def: &ModuleDefinition) -> String {
 }
 
 pub fn gen_index_sqls(def: &ModuleDefinition) -> Vec<String> {
-    def.indexes.iter().map(|idx| {
-        let safe_name = idx.replace(',', "_").replace(' ', "");
-        let cols_quoted: Vec<String> = idx.split(',')
-            .map(|c| format!("\"{}\"", c.trim()))
-            .collect();
-        format!(
-            "CREATE INDEX IF NOT EXISTS idx_{}_{} ON {}({})",
-            def.module, safe_name, def.module, cols_quoted.join(", ")
-        )
-    }).collect()
+    def.indexes
+        .iter()
+        .map(|idx| {
+            let safe_name = idx.replace(',', "_").replace(' ', "");
+            let cols_quoted: Vec<String> = idx
+                .split(',')
+                .map(|c| format!("\"{}\"", c.trim()))
+                .collect();
+            format!(
+                "CREATE INDEX IF NOT EXISTS idx_{}_{} ON {}({})",
+                def.module,
+                safe_name,
+                def.module,
+                cols_quoted.join(", ")
+            )
+        })
+        .collect()
 }
 
 // ── Built-in definitions ──

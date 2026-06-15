@@ -1,0 +1,46 @@
+services:
+  suitecrm-db:
+    image: mariadb:10.11
+    container_name: ironcrm-suitecrm-db
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: suitecrm-root
+      MARIADB_DATABASE: bitnami_suitecrm
+      MARIADB_USER: bn_suitecrm
+      MARIADB_PASSWORD: suitecrm
+    ports:
+      - "127.0.0.1:3307:3306"
+    volumes:
+      - suitecrm_db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "127.0.0.1", "-uroot", "-psuitecrm-root"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  suitecrm:
+    image: bitnamilegacy/suitecrm:8.8.1-debian-12-r3
+    container_name: ironcrm-suitecrm
+    restart: unless-stopped
+    depends_on:
+      suitecrm-db:
+        condition: service_healthy
+    environment:
+      SUITECRM_DATABASE_HOST: suitecrm-db
+      SUITECRM_DATABASE_PORT_NUMBER: 3306
+      SUITECRM_DATABASE_NAME: bitnami_suitecrm
+      SUITECRM_DATABASE_USER: bn_suitecrm
+      SUITECRM_DATABASE_PASSWORD: suitecrm
+      SUITECRM_USERNAME: admin
+      SUITECRM_PASSWORD: ironcrm-suite
+      SUITECRM_EMAIL: admin@example.local
+      SUITECRM_HOST: 127.0.0.1
+      SUITECRM_EXTERNAL_HTTP_PORT_NUMBER: 8088
+    ports:
+      - "127.0.0.1:8088:8080"
+    volumes:
+      - suitecrm_data:/bitnami/suitecrm
+
+volumes:
+  suitecrm_db:
+  suitecrm_data:

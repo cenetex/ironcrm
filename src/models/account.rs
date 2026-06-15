@@ -1,4 +1,4 @@
-use crate::models::{field, field_default, ModuleDefinition, ModuleSchema};
+use crate::models::{ModuleDefinition, ModuleSchema, field, field_default};
 
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct Account {
@@ -40,34 +40,77 @@ pub struct Account {
 impl ModuleSchema for Account {
     fn definition() -> ModuleDefinition {
         ModuleDefinition {
-            module: "accounts".into(), label: "Account".into(), label_plural: "Accounts".into(),
-            icon: Some("A".into()), default_view: "table".into(),
-            board_field: None, board_stages: None,
-            list_columns: vec!["name","industry","phone_office","billing_address_city","website"].into_iter().map(String::from).collect(),
-            detail_summary: vec!["industry","phone_office","website"].into_iter().map(String::from).collect(),
-            primary_fields: vec!["name","industry","account_type","phone_office","email1","website","billing_address_city","description"].into_iter().map(String::from).collect(),
+            module: "accounts".into(),
+            label: "Account".into(),
+            label_plural: "Accounts".into(),
+            icon: Some("A".into()),
+            default_view: "table".into(),
+            board_field: None,
+            board_stages: None,
+            list_columns: vec![
+                "name",
+                "industry",
+                "phone_office",
+                "billing_address_city",
+                "website",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
+            detail_summary: vec!["industry", "phone_office", "website"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            primary_fields: vec![
+                "name",
+                "industry",
+                "account_type",
+                "phone_office",
+                "email1",
+                "website",
+                "billing_address_city",
+                "description",
+            ]
+            .into_iter()
+            .map(String::from)
+            .collect(),
             fields: vec![
-                field("id","TEXT",0),
-                field("name","TEXT",1),
-                field("date_entered","TEXT",2), field("date_modified","TEXT",3),
-                field("modified_user_id","TEXT",4), field("created_by","TEXT",5),
-                field("description","TEXT",6), field_default("deleted","INTEGER",7,"0"),
-                field("assigned_user_id","TEXT",8), field("account_type","TEXT",9),
-                field("industry","TEXT",10), field("annual_revenue","TEXT",11),
-                field("phone_fax","TEXT",12), field("phone_office","TEXT",13),
-                field("phone_alternate","TEXT",14), field("website","TEXT",15),
-                field("ownership","TEXT",16), field("employees","TEXT",17),
-                field("ticker_symbol","TEXT",18), field("rating","TEXT",19),
-                field("billing_address_street","TEXT",20), field("billing_address_city","TEXT",21),
-                field("billing_address_state","TEXT",22), field("billing_address_postalcode","TEXT",23),
-                field("billing_address_country","TEXT",24),
-                field("shipping_address_street","TEXT",25), field("shipping_address_city","TEXT",26),
-                field("shipping_address_state","TEXT",27), field("shipping_address_postalcode","TEXT",28),
-                field("shipping_address_country","TEXT",29),
-                field("email1","TEXT",30), field("email2","TEXT",31), field("parent_id","TEXT",32),
+                field("id", "TEXT", 0),
+                field("name", "TEXT", 1),
+                field("date_entered", "TEXT", 2),
+                field("date_modified", "TEXT", 3),
+                field("modified_user_id", "TEXT", 4),
+                field("created_by", "TEXT", 5),
+                field("description", "TEXT", 6),
+                field_default("deleted", "INTEGER", 7, "0"),
+                field("assigned_user_id", "TEXT", 8),
+                field("account_type", "TEXT", 9),
+                field("industry", "TEXT", 10),
+                field("annual_revenue", "TEXT", 11),
+                field("phone_fax", "TEXT", 12),
+                field("phone_office", "TEXT", 13),
+                field("phone_alternate", "TEXT", 14),
+                field("website", "TEXT", 15),
+                field("ownership", "TEXT", 16),
+                field("employees", "TEXT", 17),
+                field("ticker_symbol", "TEXT", 18),
+                field("rating", "TEXT", 19),
+                field("billing_address_street", "TEXT", 20),
+                field("billing_address_city", "TEXT", 21),
+                field("billing_address_state", "TEXT", 22),
+                field("billing_address_postalcode", "TEXT", 23),
+                field("billing_address_country", "TEXT", 24),
+                field("shipping_address_street", "TEXT", 25),
+                field("shipping_address_city", "TEXT", 26),
+                field("shipping_address_state", "TEXT", 27),
+                field("shipping_address_postalcode", "TEXT", 28),
+                field("shipping_address_country", "TEXT", 29),
+                field("email1", "TEXT", 30),
+                field("email2", "TEXT", 31),
+                field("parent_id", "TEXT", 32),
             ],
             scan_mapping: None,
-            indexes: vec!["name".into(),"deleted".into()],
+            indexes: vec!["name".into(), "deleted".into()],
         }
     }
 }

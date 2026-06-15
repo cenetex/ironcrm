@@ -1,29 +1,29 @@
-/// IronCRM Licensing Module
-///
-/// A salted-commitment license key system with holonet audit chain.
-///
-/// ## Architecture
-///
-/// - **Key format**: `IRON-XXXX-XXXX-XXXX-XXXX` (8 random bytes)
-/// - **Commitment registry**: each key stored as `{salt, SHA256(secret || salt)}`
-///   — zero key material is disclosed in the registry.
-/// - **Holonet**: an append-only hash-linked chain of license events.
-///   Each block links to the previous by SHA256 hash, making the entire
-///   history tamper-evident. The chain can be verified independently —
-///   no server needed.
-/// - **Encrypted registry**: optional AES-256-CBC + HMAC wrapping for
-///   distribution, matching the Ares approach.
-///
-/// ## Usage
-///
-/// ```rust
-/// use ironcrm::licensing::{LicenseKey, Licensor};
-///
-/// let mut licensor = Licensor::new("keys/registry.json", "keys/holonet.json").unwrap();
-/// let key = LicenseKey::generate();
-/// licensor.issue_key(&key, Some("customer@example.com")).unwrap();
-/// assert!(licensor.validate_key(&key));
-/// ```
+//! IronCRM Licensing Module
+//!
+//! A salted-commitment license key system with holonet audit chain.
+//!
+//! ## Architecture
+//!
+//! - **Key format**: `IRON-XXXX-XXXX-XXXX-XXXX` (8 random bytes)
+//! - **Commitment registry**: each key stored as `{salt, SHA256(secret || salt)}`
+//!   — zero key material is disclosed in the registry.
+//! - **Holonet**: an append-only hash-linked chain of license events.
+//!   Each block links to the previous by SHA256 hash, making the entire
+//!   history tamper-evident. The chain can be verified independently —
+//!   no server needed.
+//! - **Encrypted registry**: optional AES-256-CBC + HMAC wrapping for
+//!   distribution, matching the Ares approach.
+//!
+//! ## Usage
+//!
+//! ```rust
+//! use ironcrm::licensing::{LicenseKey, Licensor};
+//!
+//! let mut licensor = Licensor::new("keys/registry.json", "keys/holonet.json").unwrap();
+//! let key = LicenseKey::generate();
+//! licensor.issue_key(&key, Some("customer@example.com")).unwrap();
+//! assert!(licensor.validate_key(&key));
+//! ```
 
 mod chain;
 mod key;
@@ -46,10 +46,7 @@ pub struct Licensor {
 
 impl Licensor {
     /// Open or create a licensor at the given file paths.
-    pub fn new(
-        registry_path: impl Into<PathBuf>,
-        chain_path: impl Into<PathBuf>,
-    ) -> Result<Self> {
+    pub fn new(registry_path: impl Into<PathBuf>, chain_path: impl Into<PathBuf>) -> Result<Self> {
         let registry_path = registry_path.into();
         let chain_path = chain_path.into();
 
@@ -153,9 +150,11 @@ impl Licensor {
     }
 
     fn save(&self) -> Result<()> {
-        self.registry.save(&self.registry_path)
+        self.registry
+            .save(&self.registry_path)
             .context("failed to save license registry")?;
-        self.chain.save(&self.chain_path)
+        self.chain
+            .save(&self.chain_path)
             .context("failed to save holonet chain")?;
         Ok(())
     }

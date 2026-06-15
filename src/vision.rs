@@ -19,8 +19,7 @@ pub struct ScanResult {
 /// Scan an image file using llama.cpp with a vision model.
 /// Runs inference in a blocking thread to keep the async runtime responsive.
 pub async fn scan_image(image_data: &[u8]) -> Result<ScanResult> {
-    let mut tmp = tempfile::NamedTempFile::new()
-        .context("failed to create temp file")?;
+    let mut tmp = tempfile::NamedTempFile::new().context("failed to create temp file")?;
     tmp.write_all(image_data)
         .context("failed to write image to temp file")?;
     let path = tmp.path().to_string_lossy().to_string();
@@ -61,11 +60,16 @@ fn try_llama_vision(image_path: &str) -> Result<ScanResult> {
     let has_mmproj = std::fs::metadata(mmproj_path).is_ok();
 
     let mut cmd = std::process::Command::new("llama-cli");
-    cmd.arg("-m").arg(model_path)
-        .arg("--image").arg(image_path)
-        .arg("-p").arg(prompt)
-        .arg("--temp").arg("0.1")
-        .arg("-n").arg("512")
+    cmd.arg("-m")
+        .arg(model_path)
+        .arg("--image")
+        .arg(image_path)
+        .arg("-p")
+        .arg(prompt)
+        .arg("--temp")
+        .arg("0.1")
+        .arg("-n")
+        .arg("512")
         .arg("--no-display-prompt");
 
     if has_mmproj {
@@ -124,9 +128,15 @@ pub async fn import_scan(
     if let Some(ref name) = data.name {
         if mapping.map_or(false, |m| m.split_name) {
             let parts: Vec<&str> = name.splitn(2, ' ').collect();
-            fields.insert("first_name".into(), serde_json::Value::String(parts[0].to_string()));
+            fields.insert(
+                "first_name".into(),
+                serde_json::Value::String(parts[0].to_string()),
+            );
             if parts.len() > 1 {
-                fields.insert("last_name".into(), serde_json::Value::String(parts[1].to_string()));
+                fields.insert(
+                    "last_name".into(),
+                    serde_json::Value::String(parts[1].to_string()),
+                );
             }
         } else {
             fields.insert("name".into(), serde_json::Value::String(name.clone()));

@@ -4,15 +4,15 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct KeyRegistry {
     pub keys: Vec<KeyCommitment>,
 }
 
 impl KeyRegistry {
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
-        let data = std::fs::read_to_string(path.as_ref())
-            .context("failed to read registry file")?;
+        let data =
+            std::fs::read_to_string(path.as_ref()).context("failed to read registry file")?;
         Ok(serde_json::from_str(&data)?)
     }
 
@@ -34,7 +34,7 @@ impl KeyRegistry {
             };
             let mut hasher = Sha256::new();
             hasher.update(secret);
-            hasher.update(&salt);
+            hasher.update(salt);
             let digest = hex::encode(hasher.finalize());
             if digest == entry.hash {
                 return true;
@@ -47,12 +47,19 @@ impl KeyRegistry {
         let salt: [u8; 16] = rand::random();
         let mut hasher = Sha256::new();
         hasher.update(key.secret_bytes());
-        hasher.update(&salt);
+        hasher.update(salt);
         let hash = hex::encode(hasher.finalize());
 
-        let next_id = self.keys.iter().filter_map(|k| {
-            k.id.strip_prefix("key-").and_then(|s| s.parse::<u32>().ok())
-        }).max().unwrap_or(0) + 1;
+        let next_id = self
+            .keys
+            .iter()
+            .filter_map(|k| {
+                k.id.strip_prefix("key-")
+                    .and_then(|s| s.parse::<u32>().ok())
+            })
+            .max()
+            .unwrap_or(0)
+            + 1;
 
         let entry = KeyCommitment {
             id: format!("key-{:04}", next_id),
@@ -73,18 +80,18 @@ impl KeyRegistry {
             };
             let mut hasher = Sha256::new();
             hasher.update(secret);
-            hasher.update(&salt);
+            hasher.update(salt);
             hex::encode(hasher.finalize()) != entry.hash
         });
         self.keys.len() < before
     }
 
-    pub fn len(&self) -> usize { self.keys.len() }
-    pub fn is_empty(&self) -> bool { self.keys.is_empty() }
-}
-
-impl Default for KeyRegistry {
-    fn default() -> Self { KeyRegistry { keys: Vec::new() } }
+    pub fn len(&self) -> usize {
+        self.keys.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.keys.is_empty()
+    }
 }
 
 #[cfg(test)]
