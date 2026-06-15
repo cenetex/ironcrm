@@ -48,6 +48,32 @@ pub struct SearchRecordsResponse {
 }
 
 #[derive(Deserialize)]
+pub struct SuiteCrmConnectRequest {
+    database_url: String,
+    mode: String,
+}
+
+#[derive(Serialize)]
+pub struct SuiteCrmConnectResponse {
+    status: &'static str,
+    mode: String,
+    message: String,
+    modules: Vec<String>,
+    module_counts: Vec<crate::db::SuiteCrmModuleCount>,
+    module_count: usize,
+    records: u64,
+    relationships: u64,
+    metadata_relationships: u64,
+    warnings: Vec<String>,
+}
+
+#[derive(Deserialize)]
+pub struct OdooConnectRequest {
+    database_url: String,
+    mode: String,
+}
+
+#[derive(Deserialize)]
 pub struct Pagination {
     limit: Option<u32>,
     offset: Option<u32>,
@@ -201,6 +227,138 @@ pub async fn search_records(
         total: data.len(),
         data,
     }))
+}
+
+pub async fn connect_suitecrm(
+    State(pool): State<SqlitePool>,
+    Json(payload): Json<SuiteCrmConnectRequest>,
+) -> Result<Json<SuiteCrmConnectResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let database_url = payload.database_url.trim();
+    if database_url.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "SuiteCRM connection string is required".into(),
+            }),
+        ));
+    }
+
+    let mode = payload.mode.as_str();
+    let summary = match mode {
+        "import" => crate::db::import_from_mysql_into_pool(database_url, &pool).await,
+        "sync_readonly" => crate::db::inspect_suitecrm_mysql(database_url).await,
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "Mode must be import or sync_readonly".into(),
+                }),
+            ));
+        }
+    }
+    .map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+
+    let message = if mode == "import" {
+        format!(
+            "Imported {} records from {} SuiteCRM modules.",
+            summary.records, summary.module_count
+        )
+    } else {
+        format!(
+            "Connected read-only to {} SuiteCRM modules.",
+            summary.module_count
+        )
+    };
+
+    Ok(Json(SuiteCrmConnectResponse {
+        status: "ok",
+        mode: mode.into(),
+        message,
+        modules: summary.modules,
+        module_counts: summary.module_counts,
+        module_count: summary.module_count,
+        records: summary.records,
+        relationships: summary.relationships,
+        metadata_relationships: summary.metadata_relationships,
+        warnings: summary.warnings,
+    }))
+}
+
+pub async fn detect_suitecrm() -> Json<crate::db::SuiteCrmDetection> {
+    Json(crate::db::detect_local_suitecrm())
+}
+
+pub async fn connect_odoo(
+    State(pool): State<SqlitePool>,
+    Json(payload): Json<OdooConnectRequest>,
+) -> Result<Json<SuiteCrmConnectResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let database_url = payload.database_url.trim();
+    if database_url.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "Odoo PostgreSQL connection string is required".into(),
+            }),
+        ));
+    }
+
+    let mode = payload.mode.as_str();
+    let summary = match mode {
+        "import" => crate::db::import_from_odoo_into_pool(database_url, &pool).await,
+        "sync_readonly" => crate::db::inspect_odoo_postgres(database_url).await,
+        _ => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "Mode must be import or sync_readonly".into(),
+                }),
+            ));
+        }
+    }
+    .map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            Json(ErrorResponse {
+                error: e.to_string(),
+            }),
+        )
+    })?;
+
+    let message = if mode == "import" {
+        format!(
+            "Imported {} records from {} Odoo modules.",
+            summary.records, summary.module_count
+        )
+    } else {
+        format!(
+            "Connected read-only to {} Odoo modules.",
+            summary.module_count
+        )
+    };
+
+    Ok(Json(SuiteCrmConnectResponse {
+        status: "ok",
+        mode: mode.into(),
+        message,
+        modules: summary.modules,
+        module_counts: summary.module_counts,
+        module_count: summary.module_count,
+        records: summary.records,
+        relationships: summary.relationships,
+        metadata_relationships: summary.metadata_relationships,
+        warnings: summary.warnings,
+    }))
+}
+
+pub async fn detect_odoo() -> Json<crate::db::OdooDetection> {
+    Json(crate::db::detect_local_odoo())
 }
 
 #[cfg(feature = "scanner-module")]
@@ -568,11 +726,26 @@ pub async fn restore_workspace(
             } else {
                 StatusCode::INTERNAL_SERVER_ERROR
             };
-            (
-                status,
-                Json(ErrorResponse {
-                    error: message,
-                }),
-            )
+            (status, Json(ErrorResponse { error: message }))
+        })
+}
+
+pub async fn restore_workspace_exact(
+    State(pool): State<SqlitePool>,
+    Json(bundle): Json<Value>,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
+    crate::db::restore_workspace_exact(&pool, &bundle)
+        .await
+        .map(|summary| Json(Value::Object(summary)))
+        .map_err(|e| {
+            let message = e.to_string();
+            let status = if message.contains("IronCRM workspace bundle")
+                || message.contains("Unsupported IronCRM bundle version")
+            {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (status, Json(ErrorResponse { error: message }))
         })
 }

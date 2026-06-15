@@ -55,20 +55,36 @@
 
           <div id="view-switcher" class="segmented-control"></div>
 
+          <button class="tool-btn" type="button" data-action="export-workspace">Export</button>
+
+          <div id="imports-control" class="imports-control">
+            <button class="tool-btn" id="imports-btn" type="button" aria-haspopup="menu" aria-expanded="false">Imports</button>
+            <div id="imports-menu" class="imports-menu hidden" role="menu" aria-label="Imports">
+              <button type="button" class="imports-menu-item" data-action="open-suitecrm-wizard" role="menuitem">
+                <span>SuiteCRM</span>
+                <small>Detect, review, import, undo</small>
+              </button>
+              <button type="button" class="imports-menu-item" data-action="open-odoo-wizard" role="menuitem">
+                <span>Odoo</span>
+                <small>Sandbox, review, import, undo</small>
+              </button>
+              <button type="button" class="imports-menu-item" data-action="restore-workspace" role="menuitem">
+                <span>Workspace file</span>
+                <small>Load an IronCRM bundle</small>
+              </button>
+            </div>
+          </div>
+
           <button class="tool-btn primary-btn" id="new-record-btn" type="button">New</button>
         </div>
       </header>
-
-      <section id="active-view-bar">
-        <div id="active-context">All records</div>
-        <div id="active-summary"></div>
-      </section>
 
       <section id="workspace-shell">
         <section id="workspace">
           <div id="main-view">
             <div id="loading" class="hidden">Loading...</div>
             <div id="dashboard" class="workspace-pane hidden"></div>
+            <div id="suitecrm-wizard" class="workspace-pane hidden"></div>
             <div id="table-view" class="workspace-pane hidden">
               <div class="table-shell">
                 <table id="data-table">
@@ -109,6 +125,6 @@
 
   <div id="toast-region"></div>
 
-  <script src="app.js?v=7"></script>
+  <script src="app.js"></script>
 </body>
 </html>

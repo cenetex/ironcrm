@@ -1,10 +1,16 @@
 use anyhow::Result;
+use serde::Serialize;
 use serde_json::{Map, Value};
 use sqlx::mysql::MySqlPool;
+use sqlx::postgres::PgPool;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use sqlx::{Column, Row};
 use std::collections::HashSet;
+use std::env;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
+
+const SUITECRM_CORE_MODULES: &[&str] = &["accounts", "contacts", "opportunities", "leads", "cases"];
 
 // ── SQLite connection + schema ──
 
@@ -250,38 +256,802 @@ fn sqlite_row_to_map(row: &sqlx::sqlite::SqliteRow) -> Map<String, Value> {
 
 // ── MySQL connection (import source only) ──
 
+#[derive(Debug, Clone, Serialize)]
+pub struct SuiteCrmModuleCount {
+    pub module: String,
+    pub label: String,
+    pub records: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SuiteCrmImportSummary {
+    pub modules: Vec<String>,
+    pub module_counts: Vec<SuiteCrmModuleCount>,
+    pub module_count: usize,
+    pub records: u64,
+    pub relationships: u64,
+    pub metadata_relationships: u64,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct OdooDetection {
+    pub found: bool,
+    pub message: String,
+    pub database_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SuiteCrmDetection {
+    pub found: bool,
+    pub message: String,
+    pub config_path: Option<String>,
+    pub database_url: Option<String>,
+    pub database_name: Option<String>,
+    pub host: Option<String>,
+}
+
 pub async fn connect_mysql(database_url: &str) -> Result<MySqlPool> {
     let pool = MySqlPool::connect(database_url).await?;
     Ok(pool)
 }
 
-// ── Import: MySQL → SQLite ──
+pub async fn connect_postgres(database_url: &str) -> Result<PgPool> {
+    let pool = PgPool::connect(database_url).await?;
+    Ok(pool)
+}
 
-pub async fn import_from_mysql(source_url: &str, target_path: &str) -> Result<()> {
-    let mysql = connect_mysql(source_url).await?;
-    let sqlite = connect_sqlite(target_path).await?;
-
-    let modules = discover_modules_mysql(&mysql).await?;
-    tracing::info!("Importing {} modules...", modules.len());
-
-    for module in &modules {
-        import_module(&mysql, &sqlite, module).await?;
+pub fn detect_local_suitecrm() -> SuiteCrmDetection {
+    for candidate in suitecrm_config_candidates() {
+        if !candidate.is_file() {
+            continue;
+        }
+        let Ok(contents) = std::fs::read_to_string(&candidate) else {
+            continue;
+        };
+        if let Some(detection) = detection_from_config(&candidate, &contents) {
+            return detection;
+        }
     }
 
-    import_relationships(&mysql, &sqlite).await?;
+    SuiteCrmDetection {
+        found: false,
+        message: "No local SuiteCRM config.php found in common locations.".into(),
+        config_path: None,
+        database_url: None,
+        database_name: None,
+        host: None,
+    }
+}
+
+fn suitecrm_config_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(path) = env::var("SUITECRM_CONFIG_PATH") {
+        candidates.push(PathBuf::from(path));
+    }
+
+    if let Ok(cwd) = env::current_dir() {
+        add_standard_config_candidates(&mut candidates, &cwd);
+        if let Some(parent) = cwd.parent() {
+            add_standard_config_candidates(&mut candidates, parent);
+        }
+    }
+    add_standard_config_candidates(&mut candidates, Path::new(env!("CARGO_MANIFEST_DIR")));
+
+    if let Ok(home) = env::var("HOME") {
+        let home = PathBuf::from(home);
+        for root in [
+            home.join("Sites"),
+            home.join("www"),
+            home.join("htdocs"),
+            home.join("code"),
+            home.join("develop"),
+            home.join("Downloads"),
+        ] {
+            add_standard_config_candidates(&mut candidates, &root);
+            add_child_config_candidates(&mut candidates, &root);
+        }
+    }
+
+    for path in [
+        "/Applications/MAMP/htdocs/suitecrm/config.php",
+        "/Applications/MAMP/htdocs/SuiteCRM/config.php",
+        "/opt/homebrew/var/www/suitecrm/config.php",
+        "/opt/homebrew/var/www/SuiteCRM/config.php",
+        "/usr/local/var/www/suitecrm/config.php",
+        "/usr/local/var/www/SuiteCRM/config.php",
+        "/var/www/html/suitecrm/config.php",
+        "/var/www/html/SuiteCRM/config.php",
+        "/var/www/suitecrm/config.php",
+        "/var/www/SuiteCRM/config.php",
+    ] {
+        candidates.push(PathBuf::from(path));
+    }
+
+    let mut seen = HashSet::new();
+    candidates
+        .into_iter()
+        .filter(|path| seen.insert(path.clone()))
+        .collect()
+}
+
+fn add_standard_config_candidates(candidates: &mut Vec<PathBuf>, root: &Path) {
+    candidates.push(root.join("config.php"));
+    candidates.push(root.join("suitecrm").join("config.php"));
+    candidates.push(root.join("SuiteCRM").join("config.php"));
+}
+
+fn add_child_config_candidates(candidates: &mut Vec<PathBuf>, root: &Path) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten().take(80) {
+        let path = entry.path();
+        if path.is_dir() {
+            add_standard_config_candidates(candidates, &path);
+        }
+    }
+}
+
+fn detection_from_config(path: &Path, contents: &str) -> Option<SuiteCrmDetection> {
+    if !contents.contains("$sugar_config") || !contents.contains("dbconfig") {
+        return None;
+    }
+
+    let db_name = php_config_value(contents, "db_name")?;
+    let user = php_config_value(contents, "db_user_name")?;
+    let password = php_config_value(contents, "db_password").unwrap_or_default();
+    let mut host = php_config_value(contents, "db_host_name").unwrap_or_else(|| "localhost".into());
+    if host.trim().is_empty() {
+        host = "localhost".into();
+    }
+    let port = php_config_value(contents, "db_port").filter(|value| !value.trim().is_empty());
+    let db_type = php_config_value(contents, "db_type").unwrap_or_else(|| "mysql".into());
+    if !db_type.to_lowercase().contains("mysql") {
+        return None;
+    }
+
+    let host_with_port = if host.contains(':') || host.starts_with('/') {
+        host.clone()
+    } else if let Some(port) = port {
+        format!("{host}:{port}")
+    } else {
+        format!("{host}:3306")
+    };
+    let database_url = format!(
+        "mysql://{}:{}@{}/{}",
+        url_component(&user),
+        url_component(&password),
+        host_with_port,
+        url_component(&db_name)
+    );
+
+    Some(SuiteCrmDetection {
+        found: true,
+        message: format!("Detected SuiteCRM config at {}", path.display()),
+        config_path: Some(path.display().to_string()),
+        database_url: Some(database_url),
+        database_name: Some(db_name),
+        host: Some(host_with_port),
+    })
+}
+
+fn php_config_value(contents: &str, key: &str) -> Option<String> {
+    let key_pos = contents
+        .find(&format!("'{}'", key))
+        .or_else(|| contents.find(&format!("\"{}\"", key)))?;
+    let after_key = &contents[key_pos + key.len() + 2..];
+    let arrow_pos = after_key.find("=>")?;
+    let mut value = after_key[arrow_pos + 2..].trim_start();
+    if value.starts_with("array") {
+        return None;
+    }
+    let quote = value.chars().next()?;
+    if quote == '\'' || quote == '"' {
+        value = &value[quote.len_utf8()..];
+        let end = value.find(quote)?;
+        return Some(value[..end].to_string());
+    }
+    let end = value.find([',', '\n', '\r']).unwrap_or(value.len());
+    Some(value[..end].trim().trim_matches(';').to_string())
+}
+
+fn url_component(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        let keep = byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~');
+        if keep {
+            encoded.push(byte as char);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
+// ── Import: MySQL → SQLite ──
+
+pub async fn inspect_suitecrm_mysql(source_url: &str) -> Result<SuiteCrmImportSummary> {
+    let mysql = connect_mysql(source_url).await?;
+    inspect_suitecrm_source(&mysql).await
+}
+
+pub async fn import_from_mysql(
+    source_url: &str,
+    target_path: &str,
+) -> Result<SuiteCrmImportSummary> {
+    let sqlite = connect_sqlite(target_path).await?;
+    import_from_mysql_into_pool(source_url, &sqlite).await
+}
+
+pub async fn import_from_mysql_into_pool(
+    source_url: &str,
+    sqlite: &SqlitePool,
+) -> Result<SuiteCrmImportSummary> {
+    let mysql = connect_mysql(source_url).await?;
+
+    let mut summary = inspect_suitecrm_source(&mysql).await?;
+    let modules = summary.modules.clone();
+    tracing::info!("Importing {} modules...", modules.len());
+
+    let mut records = 0u64;
+    for module in &modules {
+        records += import_module(&mysql, sqlite, module).await?;
+    }
+
+    let relationship_definitions = import_relationships(&mysql, sqlite).await?;
+    let relationship_links = import_core_relationship_links(&mysql, sqlite).await?;
+    summary.records = records;
+    summary.relationships = relationship_links;
+    summary.metadata_relationships = relationship_definitions;
+    Ok(summary)
+}
+
+// ── Import: Odoo PostgreSQL -> SQLite ──
+
+pub async fn inspect_odoo_postgres(source_url: &str) -> Result<SuiteCrmImportSummary> {
+    let postgres = connect_postgres(source_url).await?;
+    inspect_odoo_source(&postgres).await
+}
+
+pub async fn import_from_odoo_into_pool(
+    source_url: &str,
+    sqlite: &SqlitePool,
+) -> Result<SuiteCrmImportSummary> {
+    let postgres = connect_postgres(source_url).await?;
+
+    let mut summary = inspect_odoo_source(&postgres).await?;
+    let mut records = 0u64;
+    records += import_odoo_accounts(&postgres, sqlite).await?;
+    records += import_odoo_contacts(&postgres, sqlite).await?;
+    records += import_odoo_opportunities(&postgres, sqlite).await?;
+    records += import_odoo_leads(&postgres, sqlite).await?;
+    summary.records = records;
+    summary.relationships = import_odoo_relationship_links(&postgres, sqlite).await?;
+    Ok(summary)
+}
+
+pub fn detect_local_odoo() -> OdooDetection {
+    if let Ok(database_url) = env::var("ODOO_DATABASE_URL")
+        && !database_url.trim().is_empty()
+    {
+        return OdooDetection {
+            found: true,
+            message: "Using ODOO_DATABASE_URL from the environment.".into(),
+            database_url: Some(database_url),
+        };
+    }
+
+    OdooDetection {
+        found: true,
+        message: "Use the bundled sandbox connection string for dev/odoo.".into(),
+        database_url: Some("postgres://odoo:odoo@127.0.0.1:5433/odoo".into()),
+    }
+}
+
+async fn inspect_odoo_source(postgres: &PgPool) -> Result<SuiteCrmImportSummary> {
+    let mut module_counts = Vec::new();
+    let mut modules = Vec::new();
+    let mut records = 0u64;
+    let mut warnings = Vec::new();
+
+    if !pg_table_exists(postgres, "res_partner").await? {
+        warnings.push("Odoo table res_partner was not found.".into());
+    } else {
+        let accounts = count_pg_rows(
+            postgres,
+            "res_partner",
+            "WHERE active IS DISTINCT FROM false AND COALESCE(is_company, false) = true",
+        )
+        .await?;
+        let contacts = count_pg_rows(
+            postgres,
+            "res_partner",
+            "WHERE active IS DISTINCT FROM false AND COALESCE(is_company, false) = false",
+        )
+        .await?;
+        modules.push("accounts".into());
+        module_counts.push(SuiteCrmModuleCount {
+            module: "accounts".into(),
+            label: "Accounts".into(),
+            records: accounts,
+        });
+        modules.push("contacts".into());
+        module_counts.push(SuiteCrmModuleCount {
+            module: "contacts".into(),
+            label: "Contacts".into(),
+            records: contacts,
+        });
+        records += accounts + contacts;
+    }
+
+    if !pg_table_exists(postgres, "crm_lead").await? {
+        warnings.push("Odoo CRM table crm_lead was not found. Install Odoo CRM before importing leads or opportunities.".into());
+    } else {
+        let opportunities = count_pg_rows(
+            postgres,
+            "crm_lead",
+            "WHERE active IS DISTINCT FROM false AND type = 'opportunity'",
+        )
+        .await?;
+        let leads = count_pg_rows(
+            postgres,
+            "crm_lead",
+            "WHERE active IS DISTINCT FROM false AND COALESCE(type, 'lead') != 'opportunity'",
+        )
+        .await?;
+        modules.push("opportunities".into());
+        module_counts.push(SuiteCrmModuleCount {
+            module: "opportunities".into(),
+            label: "Opportunities".into(),
+            records: opportunities,
+        });
+        modules.push("leads".into());
+        module_counts.push(SuiteCrmModuleCount {
+            module: "leads".into(),
+            label: "Leads".into(),
+            records: leads,
+        });
+        records += opportunities + leads;
+    }
+
+    let relationships = count_odoo_relationship_links(postgres).await?;
+    if records == 0 {
+        warnings.push("No active Odoo CRM records were found in the selected database.".into());
+    }
+
+    Ok(SuiteCrmImportSummary {
+        module_count: modules.len(),
+        modules,
+        module_counts,
+        records,
+        relationships,
+        metadata_relationships: 0,
+        warnings,
+    })
+}
+
+async fn import_odoo_accounts(postgres: &PgPool, sqlite: &SqlitePool) -> Result<u64> {
+    if !pg_table_exists(postgres, "res_partner").await? {
+        return Ok(0);
+    }
+    let rows = sqlx::query(
+        "SELECT id::text AS source_id, name, email, phone, mobile, website, street, city, zip,
+                create_date::text AS create_date, write_date::text AS write_date
+         FROM res_partner
+         WHERE active IS DISTINCT FROM false AND COALESCE(is_company, false) = true",
+    )
+    .fetch_all(postgres)
+    .await?;
+
+    let mut count = 0u64;
+    for row in rows {
+        let source_id = pg_string(&row, "source_id").unwrap_or_default();
+        if source_id.trim().is_empty() {
+            continue;
+        }
+        let id = odoo_record_id("res_partner", &source_id);
+        let mut map = odoo_base_map("res_partner", &source_id);
+        put_pg_string(&mut map, &row, "name", "name");
+        put_pg_string(&mut map, &row, "email", "email1");
+        put_pg_string(&mut map, &row, "phone", "phone_office");
+        put_pg_string(&mut map, &row, "mobile", "phone_alternate");
+        put_pg_string(&mut map, &row, "website", "website");
+        put_pg_string(&mut map, &row, "street", "billing_address_street");
+        put_pg_string(&mut map, &row, "city", "billing_address_city");
+        put_pg_string(&mut map, &row, "zip", "billing_address_postalcode");
+        put_pg_string(&mut map, &row, "create_date", "date_entered");
+        put_pg_string(&mut map, &row, "write_date", "date_modified");
+        store_imported_record(sqlite, "accounts", &id, &map).await?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+async fn import_odoo_contacts(postgres: &PgPool, sqlite: &SqlitePool) -> Result<u64> {
+    if !pg_table_exists(postgres, "res_partner").await? {
+        return Ok(0);
+    }
+    let rows = sqlx::query(
+        "SELECT id::text AS source_id, parent_id::text AS parent_id, name, email, phone, mobile,
+                function AS title, street, city, zip, create_date::text AS create_date,
+                write_date::text AS write_date
+         FROM res_partner
+         WHERE active IS DISTINCT FROM false AND COALESCE(is_company, false) = false",
+    )
+    .fetch_all(postgres)
+    .await?;
+
+    let mut count = 0u64;
+    for row in rows {
+        let source_id = pg_string(&row, "source_id").unwrap_or_default();
+        if source_id.trim().is_empty() {
+            continue;
+        }
+        let id = odoo_record_id("res_partner", &source_id);
+        let mut map = odoo_base_map("res_partner", &source_id);
+        split_odoo_name(pg_string(&row, "name").as_deref(), &mut map);
+        put_pg_string(&mut map, &row, "email", "email1");
+        put_pg_string(&mut map, &row, "phone", "phone_work");
+        put_pg_string(&mut map, &row, "mobile", "phone_mobile");
+        put_pg_string(&mut map, &row, "title", "title");
+        put_pg_string(&mut map, &row, "street", "primary_address_street");
+        put_pg_string(&mut map, &row, "city", "primary_address_city");
+        put_pg_string(&mut map, &row, "zip", "primary_address_postalcode");
+        put_pg_string(&mut map, &row, "create_date", "date_entered");
+        put_pg_string(&mut map, &row, "write_date", "date_modified");
+        if let Some(parent_id) = pg_string(&row, "parent_id") {
+            map.insert(
+                "account_id".into(),
+                Value::String(odoo_record_id("res_partner", &parent_id)),
+            );
+        }
+        store_imported_record(sqlite, "contacts", &id, &map).await?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+async fn import_odoo_opportunities(postgres: &PgPool, sqlite: &SqlitePool) -> Result<u64> {
+    import_odoo_crm_leads(postgres, sqlite, "opportunities", true).await
+}
+
+async fn import_odoo_leads(postgres: &PgPool, sqlite: &SqlitePool) -> Result<u64> {
+    import_odoo_crm_leads(postgres, sqlite, "leads", false).await
+}
+
+async fn import_odoo_crm_leads(
+    postgres: &PgPool,
+    sqlite: &SqlitePool,
+    module: &str,
+    opportunities: bool,
+) -> Result<u64> {
+    if !pg_table_exists(postgres, "crm_lead").await? {
+        return Ok(0);
+    }
+    let clause = if opportunities {
+        "type = 'opportunity'"
+    } else {
+        "COALESCE(type, 'lead') != 'opportunity'"
+    };
+    let sql = format!(
+        "SELECT lead.id::text AS source_id, lead.partner_id::text AS partner_id, lead.name,
+                lead.contact_name, lead.partner_name, lead.email_from, lead.phone, lead.mobile,
+                lead.description, lead.expected_revenue::text AS expected_revenue,
+                lead.probability::text AS probability, lead.date_deadline::text AS date_deadline,
+                lead.create_date::text AS create_date, lead.write_date::text AS write_date,
+                stage.name::text AS stage_name
+         FROM crm_lead lead
+         LEFT JOIN crm_stage stage ON stage.id = lead.stage_id
+         WHERE lead.active IS DISTINCT FROM false AND {clause}"
+    );
+    let rows = sqlx::query(&sql).fetch_all(postgres).await?;
+
+    let mut count = 0u64;
+    for row in rows {
+        let source_id = pg_string(&row, "source_id").unwrap_or_default();
+        if source_id.trim().is_empty() {
+            continue;
+        }
+        let id = odoo_record_id("crm_lead", &source_id);
+        let mut map = odoo_base_map("crm_lead", &source_id);
+        put_pg_string(&mut map, &row, "name", "name");
+        put_pg_string(&mut map, &row, "description", "description");
+        put_pg_string(&mut map, &row, "create_date", "date_entered");
+        put_pg_string(&mut map, &row, "write_date", "date_modified");
+        if let Some(partner_id) = pg_string(&row, "partner_id") {
+            map.insert(
+                "account_id".into(),
+                Value::String(odoo_record_id("res_partner", &partner_id)),
+            );
+        }
+
+        if module == "opportunities" {
+            put_pg_string(&mut map, &row, "expected_revenue", "amount");
+            put_pg_string(&mut map, &row, "expected_revenue", "amount_usdollar");
+            put_pg_string(&mut map, &row, "probability", "probability");
+            put_pg_string(&mut map, &row, "date_deadline", "date_closed");
+            if let Some(stage) = pg_string(&row, "stage_name") {
+                map.insert("sales_stage".into(), Value::String(clean_odoo_text(&stage)));
+            } else {
+                map.insert("sales_stage".into(), Value::String("Qualification".into()));
+            }
+        } else {
+            split_odoo_name(pg_string(&row, "contact_name").as_deref(), &mut map);
+            if let Some(company) = pg_string(&row, "partner_name") {
+                map.insert("account_name".into(), Value::String(company));
+            }
+            put_pg_string(&mut map, &row, "email_from", "email1");
+            put_pg_string(&mut map, &row, "phone", "phone_work");
+            put_pg_string(&mut map, &row, "mobile", "phone_mobile");
+            if let Some(stage) = pg_string(&row, "stage_name") {
+                map.insert("status".into(), Value::String(clean_odoo_text(&stage)));
+            } else {
+                map.insert("status".into(), Value::String("New".into()));
+            }
+        }
+
+        store_imported_record(sqlite, module, &id, &map).await?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+async fn import_odoo_relationship_links(postgres: &PgPool, sqlite: &SqlitePool) -> Result<u64> {
+    let mut count = 0u64;
+    if pg_table_exists(postgres, "res_partner").await? {
+        let rows = sqlx::query(
+            "SELECT child.id::text AS contact_id, child.parent_id::text AS account_id
+             FROM res_partner child
+             JOIN res_partner parent ON parent.id = child.parent_id
+             WHERE child.active IS DISTINCT FROM false
+               AND parent.active IS DISTINCT FROM false
+               AND COALESCE(child.is_company, false) = false
+               AND COALESCE(parent.is_company, false) = true",
+        )
+        .fetch_all(postgres)
+        .await?;
+        for row in rows {
+            let Some(contact_id) = pg_string(&row, "contact_id") else {
+                continue;
+            };
+            let Some(account_id) = pg_string(&row, "account_id") else {
+                continue;
+            };
+            if link_records(
+                sqlite,
+                "accounts",
+                &odoo_record_id("res_partner", &account_id),
+                "contacts",
+                &odoo_record_id("res_partner", &contact_id),
+                Some("account_contact"),
+            )
+            .await?
+            .is_some()
+            {
+                count += 1;
+            }
+        }
+    }
+
+    if pg_table_exists(postgres, "crm_lead").await? {
+        let rows = sqlx::query(
+            "SELECT id::text AS lead_id, partner_id::text AS partner_id
+             FROM crm_lead
+             WHERE active IS DISTINCT FROM false
+               AND type = 'opportunity'
+               AND partner_id IS NOT NULL",
+        )
+        .fetch_all(postgres)
+        .await?;
+        for row in rows {
+            let Some(lead_id) = pg_string(&row, "lead_id") else {
+                continue;
+            };
+            let Some(partner_id) = pg_string(&row, "partner_id") else {
+                continue;
+            };
+            if link_records(
+                sqlite,
+                "accounts",
+                &odoo_record_id("res_partner", &partner_id),
+                "opportunities",
+                &odoo_record_id("crm_lead", &lead_id),
+                Some("account_opportunity"),
+            )
+            .await?
+            .is_some()
+            {
+                count += 1;
+            }
+        }
+    }
+
+    Ok(count)
+}
+
+async fn count_odoo_relationship_links(postgres: &PgPool) -> Result<u64> {
+    let mut count = 0u64;
+    if pg_table_exists(postgres, "res_partner").await? {
+        count += count_pg_rows(
+            postgres,
+            "res_partner child JOIN res_partner parent ON parent.id = child.parent_id",
+            "WHERE child.active IS DISTINCT FROM false
+               AND parent.active IS DISTINCT FROM false
+               AND COALESCE(child.is_company, false) = false
+               AND COALESCE(parent.is_company, false) = true",
+        )
+        .await?;
+    }
+    if pg_table_exists(postgres, "crm_lead").await? {
+        count += count_pg_rows(
+            postgres,
+            "crm_lead",
+            "WHERE active IS DISTINCT FROM false AND type = 'opportunity' AND partner_id IS NOT NULL",
+        )
+        .await?;
+    }
+    Ok(count)
+}
+
+async fn pg_table_exists(postgres: &PgPool, table: &str) -> Result<bool> {
+    let row = sqlx::query("SELECT to_regclass($1) IS NOT NULL AS exists")
+        .bind(format!("public.{table}"))
+        .fetch_one(postgres)
+        .await?;
+    Ok(row.try_get::<bool, _>("exists").unwrap_or(false))
+}
+
+async fn count_pg_rows(postgres: &PgPool, table: &str, clause: &str) -> Result<u64> {
+    let sql = format!("SELECT COUNT(*) AS cnt FROM {table} {clause}");
+    let row = sqlx::query(&sql).fetch_one(postgres).await?;
+    let count = row.try_get::<i64, _>("cnt").unwrap_or_default();
+    Ok(count.max(0) as u64)
+}
+
+fn odoo_record_id(model: &str, source_id: &str) -> String {
+    format!("odoo:{model}:{source_id}")
+}
+
+fn odoo_base_map(model: &str, source_id: &str) -> Map<String, Value> {
+    let mut map = Map::new();
+    map.insert("deleted".into(), Value::String("0".into()));
+    map.insert("source_system".into(), Value::String("odoo".into()));
+    map.insert("source_module".into(), Value::String(model.into()));
+    map.insert("source_id".into(), Value::String(source_id.into()));
+    map
+}
+
+async fn store_imported_record(
+    sqlite: &SqlitePool,
+    module: &str,
+    id: &str,
+    map: &Map<String, Value>,
+) -> Result<()> {
+    let json = serde_json::to_string(map)?;
+    sqlx::query("INSERT OR REPLACE INTO records (module, id, data) VALUES (?, ?, ?)")
+        .bind(module)
+        .bind(id)
+        .bind(&json)
+        .execute(sqlite)
+        .await?;
+    if crate::module::has_definition(sqlite, module).await? {
+        upsert_typed_row(sqlite, module, id, map).await?;
+    }
     Ok(())
 }
 
-async fn import_module(mysql: &MySqlPool, sqlite: &SqlitePool, module: &str) -> Result<()> {
+fn pg_string(row: &sqlx::postgres::PgRow, name: &str) -> Option<String> {
+    row.try_get::<Option<String>, _>(name)
+        .ok()
+        .flatten()
+        .map(|value| clean_odoo_text(&value))
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn put_pg_string(
+    map: &mut Map<String, Value>,
+    row: &sqlx::postgres::PgRow,
+    source: &str,
+    target: &str,
+) {
+    if let Some(value) = pg_string(row, source) {
+        map.insert(target.into(), Value::String(value));
+    }
+}
+
+fn clean_odoo_text(value: &str) -> String {
+    value
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .to_string()
+}
+
+fn split_odoo_name(value: Option<&str>, map: &mut Map<String, Value>) {
+    let Some(name) = value.map(str::trim).filter(|name| !name.is_empty()) else {
+        return;
+    };
+    let mut parts = name.split_whitespace().collect::<Vec<_>>();
+    if parts.len() <= 1 {
+        map.insert("last_name".into(), Value::String(name.into()));
+        return;
+    }
+    let last = parts.pop().unwrap_or_default();
+    map.insert("first_name".into(), Value::String(parts.join(" ")));
+    map.insert("last_name".into(), Value::String(last.into()));
+}
+
+async fn inspect_suitecrm_source(mysql: &MySqlPool) -> Result<SuiteCrmImportSummary> {
+    let modules = discover_modules_mysql(mysql).await?;
+    let mut module_counts = Vec::new();
+    let mut records = 0u64;
+    let mut skipped_deleted = 0u64;
+
+    for module in &modules {
+        let total = count_mysql_rows(mysql, module, "").await?;
+        let active = count_mysql_rows(mysql, module, "WHERE IFNULL(deleted, 0) = 0").await?;
+        skipped_deleted += total.saturating_sub(active);
+        records += active;
+        module_counts.push(SuiteCrmModuleCount {
+            module: module.clone(),
+            label: suitecrm_module_label(module).into(),
+            records: active,
+        });
+    }
+
+    let relationships = count_core_relationship_links(mysql).await?;
+    let metadata_relationships = count_relationship_definitions(mysql).await?;
+    let mut warnings = inspect_suitecrm_warnings(mysql).await?;
+    if skipped_deleted > 0 {
+        warnings.push(format!(
+            "{} deleted SuiteCRM records will be skipped.",
+            skipped_deleted
+        ));
+    }
+    if modules.is_empty() {
+        warnings.push("No core SuiteCRM modules were found in this database.".into());
+    }
+
+    Ok(SuiteCrmImportSummary {
+        module_count: modules.len(),
+        modules,
+        module_counts,
+        records,
+        relationships,
+        metadata_relationships,
+        warnings,
+    })
+}
+
+fn suitecrm_module_label(module: &str) -> &'static str {
+    match module {
+        "accounts" => "Accounts",
+        "contacts" => "Contacts",
+        "opportunities" => "Opportunities",
+        "leads" => "Leads",
+        "cases" => "Cases",
+        _ => "Records",
+    }
+}
+
+async fn count_mysql_rows(mysql: &MySqlPool, table: &str, clause: &str) -> Result<u64> {
+    let sql = format!("SELECT COUNT(*) AS cnt FROM `{}` {}", table, clause);
+    let row = sqlx::query(&sql).fetch_one(mysql).await?;
+    let count = row.try_get::<i64, _>("cnt").unwrap_or_default();
+    Ok(count.max(0) as u64)
+}
+
+async fn import_module(mysql: &MySqlPool, sqlite: &SqlitePool, module: &str) -> Result<u64> {
     let cstm_exists = table_exists(mysql, &format!("{}_cstm", module)).await?;
 
     let sql = if cstm_exists {
         format!(
-            "SELECT b.*, c.* FROM `{}` b LEFT JOIN `{}_cstm` c ON b.id = c.id_c",
+            "SELECT b.*, c.* FROM `{}` b LEFT JOIN `{}_cstm` c ON b.id = c.id_c WHERE IFNULL(b.deleted, 0) = 0",
             module, module
         )
     } else {
-        format!("SELECT * FROM `{}`", module)
+        format!("SELECT * FROM `{}` WHERE IFNULL(deleted, 0) = 0", module)
     };
 
     let rows = sqlx::query(&sql).fetch_all(mysql).await?;
@@ -303,6 +1073,11 @@ async fn import_module(mysql: &MySqlPool, sqlite: &SqlitePool, module: &str) -> 
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        if id.trim().is_empty() {
+            continue;
+        }
+
+        enrich_suitecrm_core_record(mysql, module, &id, &mut map).await?;
 
         // Always write blob store
         let json = serde_json::to_string(&map)?;
@@ -322,7 +1097,168 @@ async fn import_module(mysql: &MySqlPool, sqlite: &SqlitePool, module: &str) -> 
     }
 
     tracing::info!("  {}: {} records", module, count);
+    Ok(count)
+}
+
+async fn enrich_suitecrm_core_record(
+    mysql: &MySqlPool,
+    module: &str,
+    id: &str,
+    map: &mut Map<String, Value>,
+) -> Result<()> {
+    match module {
+        "contacts" => {
+            set_primary_link_field(
+                mysql,
+                map,
+                "account_id",
+                "accounts_contacts",
+                "contact_id",
+                id,
+                "account_id",
+            )
+            .await?;
+        }
+        "opportunities" => {
+            set_primary_link_field(
+                mysql,
+                map,
+                "account_id",
+                "accounts_opportunities",
+                "opportunity_id",
+                id,
+                "account_id",
+            )
+            .await?;
+        }
+        _ => {}
+    }
+
+    let Some(bean_module) = suitecrm_bean_module_name(module) else {
+        return Ok(());
+    };
+    let emails = fetch_suitecrm_emails(mysql, bean_module, id).await?;
+    if map_field_is_blank(map, "email1")
+        && let Some(email) = emails.first()
+    {
+        map.insert("email1".into(), Value::String(email.clone()));
+    }
+    if map_field_is_blank(map, "email2")
+        && let Some(email) = emails.get(1)
+    {
+        map.insert("email2".into(), Value::String(email.clone()));
+    }
+
     Ok(())
+}
+
+fn suitecrm_bean_module_name(module: &str) -> Option<&'static str> {
+    match module {
+        "accounts" => Some("Accounts"),
+        "contacts" => Some("Contacts"),
+        "leads" => Some("Leads"),
+        _ => None,
+    }
+}
+
+fn map_field_is_blank(map: &Map<String, Value>, key: &str) -> bool {
+    match map.get(key) {
+        None | Some(Value::Null) => true,
+        Some(Value::String(value)) => value.trim().is_empty(),
+        _ => false,
+    }
+}
+
+async fn set_primary_link_field(
+    mysql: &MySqlPool,
+    map: &mut Map<String, Value>,
+    field: &str,
+    join_table: &str,
+    lookup_column: &str,
+    lookup_id: &str,
+    target_column: &str,
+) -> Result<()> {
+    if !map_field_is_blank(map, field) {
+        return Ok(());
+    }
+    if let Some(linked_id) =
+        fetch_suitecrm_linked_id(mysql, join_table, lookup_column, lookup_id, target_column).await?
+    {
+        map.insert(field.into(), Value::String(linked_id));
+    }
+    Ok(())
+}
+
+async fn fetch_suitecrm_linked_id(
+    mysql: &MySqlPool,
+    join_table: &str,
+    lookup_column: &str,
+    lookup_id: &str,
+    target_column: &str,
+) -> Result<Option<String>> {
+    if !table_exists(mysql, join_table).await? {
+        return Ok(None);
+    }
+
+    let sql = format!(
+        "SELECT `{}` AS linked_id
+         FROM `{}`
+         WHERE IFNULL(deleted, 0) = 0
+           AND `{}` = ?
+           AND `{}` IS NOT NULL
+         ORDER BY date_modified DESC
+         LIMIT 1",
+        target_column, join_table, lookup_column, target_column,
+    );
+    let row = sqlx::query(&sql)
+        .bind(lookup_id)
+        .fetch_optional(mysql)
+        .await?;
+    Ok(row.and_then(|row| {
+        row.try_get::<Option<String>, _>("linked_id")
+            .ok()
+            .flatten()
+            .filter(|value| !value.trim().is_empty())
+    }))
+}
+
+async fn fetch_suitecrm_emails(
+    mysql: &MySqlPool,
+    bean_module: &str,
+    bean_id: &str,
+) -> Result<Vec<String>> {
+    if !table_exists(mysql, "email_addr_bean_rel").await?
+        || !table_exists(mysql, "email_addresses").await?
+    {
+        return Ok(Vec::new());
+    }
+
+    let rows = sqlx::query(
+        "SELECT ea.email_address
+         FROM email_addr_bean_rel rel
+         JOIN email_addresses ea ON ea.id = rel.email_address_id
+         WHERE rel.bean_module = ?
+           AND rel.bean_id = ?
+           AND IFNULL(rel.deleted, 0) = 0
+           AND IFNULL(ea.deleted, 0) = 0
+           AND IFNULL(ea.invalid_email, 0) = 0
+         ORDER BY rel.primary_address DESC, rel.date_modified DESC
+         LIMIT 2",
+    )
+    .bind(bean_module)
+    .bind(bean_id)
+    .fetch_all(mysql)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|row| {
+            row.try_get::<Option<String>, _>("email_address")
+                .ok()
+                .flatten()
+        })
+        .filter(|email| !email.trim().is_empty())
+        .collect())
 }
 
 /// Extract a column value from a MySQL row, handling VARBINARY, strings, ints, and floats.
@@ -367,7 +1303,7 @@ fn extract_mysql_value(row: &sqlx::mysql::MySqlRow, name: &str) -> Value {
     Value::Null
 }
 
-async fn import_relationships(mysql: &MySqlPool, sqlite: &SqlitePool) -> Result<()> {
+async fn import_relationships(mysql: &MySqlPool, sqlite: &SqlitePool) -> Result<u64> {
     let rows = sqlx::query(
         "SELECT relationship_name, lhs_module, lhs_table, rhs_module, rhs_table
          FROM relationships",
@@ -375,12 +1311,36 @@ async fn import_relationships(mysql: &MySqlPool, sqlite: &SqlitePool) -> Result<
     .fetch_all(mysql)
     .await?;
 
+    let mut count = 0u64;
     for row in &rows {
-        let rel_name: String = row.get("relationship_name");
-        let lhs_module: String = row.get("lhs_module");
-        let lhs_table: String = row.get("lhs_table");
-        let rhs_module: String = row.get("rhs_module");
-        let rhs_table: String = row.get("rhs_table");
+        let rel_name = row
+            .try_get::<Option<String>, _>("relationship_name")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        if rel_name.trim().is_empty() {
+            continue;
+        }
+        let lhs_module = row
+            .try_get::<Option<String>, _>("lhs_module")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let lhs_table = row
+            .try_get::<Option<String>, _>("lhs_table")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let rhs_module = row
+            .try_get::<Option<String>, _>("rhs_module")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let rhs_table = row
+            .try_get::<Option<String>, _>("rhs_table")
+            .ok()
+            .flatten()
+            .unwrap_or_default();
 
         let mut map = Map::new();
         map.insert("relationship_name".into(), Value::String(rel_name.clone()));
@@ -396,50 +1356,263 @@ async fn import_relationships(mysql: &MySqlPool, sqlite: &SqlitePool) -> Result<
             .bind(&json)
             .execute(sqlite)
             .await?;
+        count += 1;
     }
 
-    tracing::info!("  _relationships: {} definitions", rows.len());
-    Ok(())
+    tracing::info!("  _relationships: {} definitions", count);
+    Ok(count)
+}
+
+struct SuiteCrmLinkTable {
+    table: &'static str,
+    source_module: &'static str,
+    source_column: &'static str,
+    target_module: &'static str,
+    target_column: &'static str,
+    relationship_type: &'static str,
+}
+
+const SUITECRM_CORE_LINK_TABLES: &[SuiteCrmLinkTable] = &[
+    SuiteCrmLinkTable {
+        table: "accounts_contacts",
+        source_module: "accounts",
+        source_column: "account_id",
+        target_module: "contacts",
+        target_column: "contact_id",
+        relationship_type: "account_contact",
+    },
+    SuiteCrmLinkTable {
+        table: "accounts_opportunities",
+        source_module: "accounts",
+        source_column: "account_id",
+        target_module: "opportunities",
+        target_column: "opportunity_id",
+        relationship_type: "account_opportunity",
+    },
+    SuiteCrmLinkTable {
+        table: "opportunities_contacts",
+        source_module: "opportunities",
+        source_column: "opportunity_id",
+        target_module: "contacts",
+        target_column: "contact_id",
+        relationship_type: "opportunity_contact",
+    },
+    SuiteCrmLinkTable {
+        table: "accounts_cases",
+        source_module: "accounts",
+        source_column: "account_id",
+        target_module: "cases",
+        target_column: "case_id",
+        relationship_type: "account_case",
+    },
+    SuiteCrmLinkTable {
+        table: "contacts_cases",
+        source_module: "contacts",
+        source_column: "contact_id",
+        target_module: "cases",
+        target_column: "case_id",
+        relationship_type: "contact_case",
+    },
+];
+
+async fn count_relationship_definitions(mysql: &MySqlPool) -> Result<u64> {
+    if !table_exists(mysql, "relationships").await? {
+        return Ok(0);
+    }
+    let row = sqlx::query(
+        "SELECT COUNT(*) AS cnt
+         FROM relationships
+         WHERE relationship_name IS NOT NULL
+           AND relationship_name != ''",
+    )
+    .fetch_one(mysql)
+    .await?;
+    let count = row.try_get::<i64, _>("cnt").unwrap_or_default();
+    Ok(count.max(0) as u64)
+}
+
+async fn count_core_relationship_links(mysql: &MySqlPool) -> Result<u64> {
+    let mut count = 0u64;
+    for relationship in SUITECRM_CORE_LINK_TABLES {
+        count += count_valid_core_relationship_links_for(mysql, relationship).await?;
+    }
+    Ok(count)
+}
+
+async fn count_core_link_rows(mysql: &MySqlPool, relationship: &SuiteCrmLinkTable) -> Result<u64> {
+    if !table_exists(mysql, relationship.table).await? {
+        return Ok(0);
+    }
+    let sql = format!(
+        "SELECT COUNT(*) AS cnt
+         FROM `{}`
+         WHERE IFNULL(deleted, 0) = 0
+           AND `{}` IS NOT NULL
+           AND `{}` IS NOT NULL",
+        relationship.table, relationship.source_column, relationship.target_column,
+    );
+    let row = sqlx::query(&sql).fetch_one(mysql).await?;
+    let count = row.try_get::<i64, _>("cnt").unwrap_or_default();
+    Ok(count.max(0) as u64)
+}
+
+async fn count_valid_core_relationship_links_for(
+    mysql: &MySqlPool,
+    relationship: &SuiteCrmLinkTable,
+) -> Result<u64> {
+    if !table_exists(mysql, relationship.table).await?
+        || !table_exists(mysql, relationship.source_module).await?
+        || !table_exists(mysql, relationship.target_module).await?
+    {
+        return Ok(0);
+    }
+    let sql = format!(
+        "SELECT COUNT(*) AS cnt
+         FROM `{}` j
+         JOIN `{}` source_record ON source_record.id = j.`{}`
+         JOIN `{}` target_record ON target_record.id = j.`{}`
+         WHERE IFNULL(j.deleted, 0) = 0
+           AND IFNULL(source_record.deleted, 0) = 0
+           AND IFNULL(target_record.deleted, 0) = 0",
+        relationship.table,
+        relationship.source_module,
+        relationship.source_column,
+        relationship.target_module,
+        relationship.target_column,
+    );
+    let row = sqlx::query(&sql).fetch_one(mysql).await?;
+    let count = row.try_get::<i64, _>("cnt").unwrap_or_default();
+    Ok(count.max(0) as u64)
+}
+
+async fn inspect_suitecrm_warnings(mysql: &MySqlPool) -> Result<Vec<String>> {
+    let mut warnings = Vec::new();
+
+    for relationship in SUITECRM_CORE_LINK_TABLES {
+        let rows = count_core_link_rows(mysql, relationship).await?;
+        let valid = count_valid_core_relationship_links_for(mysql, relationship).await?;
+        if rows > valid {
+            warnings.push(format!(
+                "{} {} rows point to missing or deleted records and will be skipped.",
+                rows - valid,
+                relationship.relationship_type.replace('_', " ")
+            ));
+        }
+    }
+
+    for (table, bean_module, label) in [
+        ("contacts", "Contacts", "contacts"),
+        ("leads", "Leads", "leads"),
+    ] {
+        let missing = count_missing_primary_email(mysql, table, bean_module).await?;
+        if missing > 0 {
+            warnings.push(format!(
+                "{} {} do not have a primary email address.",
+                missing, label
+            ));
+        }
+    }
+
+    Ok(warnings)
+}
+
+async fn count_missing_primary_email(
+    mysql: &MySqlPool,
+    table: &str,
+    bean_module: &str,
+) -> Result<u64> {
+    if !table_exists(mysql, table).await?
+        || !table_exists(mysql, "email_addr_bean_rel").await?
+        || !table_exists(mysql, "email_addresses").await?
+    {
+        return Ok(0);
+    }
+
+    let sql = format!(
+        "SELECT COUNT(*) AS cnt
+         FROM `{}` bean
+         WHERE IFNULL(bean.deleted, 0) = 0
+           AND NOT EXISTS (
+             SELECT 1
+             FROM email_addr_bean_rel rel
+             JOIN email_addresses email ON email.id = rel.email_address_id
+             WHERE rel.bean_module = ?
+               AND rel.bean_id = bean.id
+               AND IFNULL(rel.deleted, 0) = 0
+               AND IFNULL(email.deleted, 0) = 0
+               AND IFNULL(email.invalid_email, 0) = 0
+               AND email.email_address IS NOT NULL
+               AND email.email_address != ''
+           )",
+        table
+    );
+    let row = sqlx::query(&sql).bind(bean_module).fetch_one(mysql).await?;
+    let count = row.try_get::<i64, _>("cnt").unwrap_or_default();
+    Ok(count.max(0) as u64)
+}
+
+async fn import_core_relationship_links(mysql: &MySqlPool, sqlite: &SqlitePool) -> Result<u64> {
+    let mut count = 0u64;
+
+    for relationship in SUITECRM_CORE_LINK_TABLES {
+        if !table_exists(mysql, relationship.table).await? {
+            continue;
+        }
+
+        let sql = format!(
+            "SELECT `{}` AS source_id, `{}` AS target_id
+             FROM `{}`
+             WHERE IFNULL(deleted, 0) = 0
+               AND `{}` IS NOT NULL
+               AND `{}` IS NOT NULL",
+            relationship.source_column,
+            relationship.target_column,
+            relationship.table,
+            relationship.source_column,
+            relationship.target_column,
+        );
+        let rows = sqlx::query(&sql).fetch_all(mysql).await?;
+
+        for row in rows {
+            let source_id: Option<String> = row.try_get("source_id").ok().flatten();
+            let target_id: Option<String> = row.try_get("target_id").ok().flatten();
+            let Some(source_id) = source_id.filter(|id| !id.trim().is_empty()) else {
+                continue;
+            };
+            let Some(target_id) = target_id.filter(|id| !id.trim().is_empty()) else {
+                continue;
+            };
+
+            if link_records(
+                sqlite,
+                relationship.source_module,
+                &source_id,
+                relationship.target_module,
+                &target_id,
+                Some(relationship.relationship_type),
+            )
+            .await?
+            .is_some()
+            {
+                count += 1;
+            }
+        }
+    }
+
+    tracing::info!("  record_links: {} core SuiteCRM links", count);
+    Ok(count)
 }
 
 // ── Module discovery ──
 
 pub async fn discover_modules_mysql(pool: &MySqlPool) -> Result<Vec<String>> {
-    let rows = sqlx::query(
-        r#"
-        SELECT CAST(TABLE_NAME AS CHAR) as table_name
-        FROM information_schema.TABLES
-        WHERE TABLE_SCHEMA = DATABASE()
-          AND TABLE_TYPE = 'BASE TABLE'
-          AND TABLE_NAME NOT LIKE '%\_cstm'
-          AND TABLE_NAME NOT LIKE '%\_audit'
-          AND TABLE_NAME NOT IN (
-            'aow_conditions', 'aow_actions', 'aow_processed',
-            'aor_conditions', 'aor_fields', 'aor_charts',
-            'fields_meta_data', 'relationships',
-            'tracker', 'tracker_sessions', 'tracker_perf',
-            'schedulers', 'schedulers_times', 'job_queue',
-            'config', 'versions', 'upgrade_history',
-            'address_book', 'email_cache', 'email_addr_bean_rel',
-            'email_addresses', 'email_man', 'email_templates',
-            'campaign_log', 'campaign_trkrs',
-            'oauth_tokens', 'oauth_nonce',
-            'address_book_locked', 'inbound_email',
-            'outbound_email', 'user_preferences',
-            'roles', 'role_modules', 'acl_roles', 'acl_actions',
-            'saved_search', 'favorites', 'subscriptions',
-            'eapm', 'oauth2tokens', 'oauth2clients'
-          )
-        ORDER BY TABLE_NAME
-        "#,
-    )
-    .fetch_all(pool)
-    .await?;
-
-    Ok(rows
-        .into_iter()
-        .map(|r| r.get::<String, _>("table_name"))
-        .collect())
+    let mut modules = Vec::new();
+    for module in SUITECRM_CORE_MODULES {
+        if table_exists(pool, module).await? {
+            modules.push((*module).to_string());
+        }
+    }
+    Ok(modules)
 }
 
 pub async fn discover_modules_sqlite(pool: &SqlitePool) -> Result<Vec<String>> {
@@ -992,10 +2165,7 @@ fn value_to_sql_string(value: Option<&Value>) -> String {
 }
 
 pub async fn restore_workspace(pool: &SqlitePool, bundle: &Value) -> Result<Map<String, Value>> {
-    let kind = bundle.get("kind").and_then(Value::as_str).unwrap_or("");
-    let version = bundle.get("version").and_then(Value::as_i64).unwrap_or(0);
-    anyhow::ensure!(kind == "ironcrm.workspace", "Not an IronCRM workspace bundle");
-    anyhow::ensure!(version == 1, "Unsupported IronCRM bundle version {}", version);
+    ensure_workspace_bundle(bundle)?;
 
     let mut restored_modules = 0u64;
     let mut restored_records = 0u64;
@@ -1137,6 +2307,91 @@ pub async fn restore_workspace(pool: &SqlitePool, bundle: &Value) -> Result<Map<
     result.insert("activities".into(), serde_json::json!(restored_activities));
     result.insert("record_links".into(), serde_json::json!(restored_links));
     Ok(result)
+}
+
+pub async fn restore_workspace_exact(
+    pool: &SqlitePool,
+    bundle: &Value,
+) -> Result<Map<String, Value>> {
+    ensure_workspace_bundle(bundle)?;
+    clear_workspace_data(pool, bundle).await?;
+    restore_workspace(pool, bundle).await
+}
+
+fn ensure_workspace_bundle(bundle: &Value) -> Result<()> {
+    let kind = bundle.get("kind").and_then(Value::as_str).unwrap_or("");
+    let version = bundle.get("version").and_then(Value::as_i64).unwrap_or(0);
+    anyhow::ensure!(
+        kind == "ironcrm.workspace",
+        "Not an IronCRM workspace bundle"
+    );
+    anyhow::ensure!(
+        version == 1,
+        "Unsupported IronCRM bundle version {}",
+        version
+    );
+    Ok(())
+}
+
+async fn clear_workspace_data(pool: &SqlitePool, bundle: &Value) -> Result<()> {
+    let mut modules = HashSet::new();
+    for def in crate::module::get_all_definitions(pool).await? {
+        modules.insert(def.module);
+    }
+    if let Some(definitions) = bundle.get("module_definitions").and_then(Value::as_array) {
+        for def_value in definitions {
+            if let Some(module) = def_value.get("module").and_then(Value::as_str) {
+                modules.insert(module.to_string());
+            }
+        }
+    }
+    if let Some(records) = bundle.get("records").and_then(Value::as_array) {
+        for record_value in records {
+            if let Some(module) = record_value.get("module").and_then(Value::as_str) {
+                modules.insert(module.to_string());
+            }
+        }
+    }
+
+    sqlx::query("DELETE FROM record_links")
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM activity_log")
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM records").execute(pool).await?;
+
+    for module in modules {
+        let Some(identifier) = sqlite_identifier(&module) else {
+            continue;
+        };
+        if sqlite_table_exists(pool, &module).await? {
+            let sql = format!("DELETE FROM {}", identifier);
+            sqlx::query(&sql).execute(pool).await?;
+        }
+    }
+
+    Ok(())
+}
+
+fn sqlite_identifier(identifier: &str) -> Option<String> {
+    if identifier.is_empty()
+        || !identifier
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        return None;
+    }
+    Some(format!("\"{}\"", identifier))
+}
+
+async fn sqlite_table_exists(pool: &SqlitePool, table_name: &str) -> Result<bool> {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1 LIMIT 1")
+            .bind(table_name)
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.is_some())
 }
 
 // ── Relationships (blob store) ──
@@ -1462,7 +2717,9 @@ mod tests {
             .expect("restored relationships");
         assert_eq!(restored_relationships.len(), 1);
         assert_eq!(
-            restored_relationships[0].get("name").and_then(Value::as_str),
+            restored_relationships[0]
+                .get("name")
+                .and_then(Value::as_str),
             Some("Analytical Engines Ltd")
         );
     }

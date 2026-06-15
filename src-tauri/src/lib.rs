@@ -2,7 +2,7 @@ use ironcrm::module::ModuleDefinition;
 use serde::Serialize;
 use serde_json::{Map, Value};
 use sqlx::sqlite::SqlitePool;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::Manager;
 use tauri::State;
@@ -138,6 +138,114 @@ async fn search_records(
         query,
         total: data.len(),
         data,
+    })
+}
+
+#[tauri::command]
+async fn connect_suitecrm(
+    state: State<'_, SqlitePool>,
+    database_url: String,
+    mode: String,
+) -> Result<Value, String> {
+    let database_url = database_url.trim();
+    if database_url.is_empty() {
+        return Err("SuiteCRM connection string is required".into());
+    }
+
+    let summary = match mode.as_str() {
+        "import" => ironcrm::db::import_from_mysql_into_pool(database_url, &state).await,
+        "sync_readonly" => ironcrm::db::inspect_suitecrm_mysql(database_url).await,
+        _ => return Err("Mode must be import or sync_readonly".into()),
+    }
+    .map_err(|e| e.to_string())?;
+
+    let message = if mode == "import" {
+        format!(
+            "Imported {} records from {} SuiteCRM modules.",
+            summary.records, summary.module_count
+        )
+    } else {
+        format!(
+            "Connected read-only to {} SuiteCRM modules.",
+            summary.module_count
+        )
+    };
+
+    Ok(serde_json::json!({
+        "status": "ok",
+        "mode": mode,
+        "message": message,
+        "modules": summary.modules,
+        "module_counts": summary.module_counts,
+        "module_count": summary.module_count,
+        "records": summary.records,
+        "relationships": summary.relationships,
+        "metadata_relationships": summary.metadata_relationships,
+        "warnings": summary.warnings
+    }))
+}
+
+#[tauri::command]
+fn detect_suitecrm() -> Value {
+    serde_json::to_value(ironcrm::db::detect_local_suitecrm()).unwrap_or_else(|_| {
+        serde_json::json!({
+            "found": false,
+            "message": "Could not inspect local SuiteCRM locations."
+        })
+    })
+}
+
+#[tauri::command]
+async fn connect_odoo(
+    state: State<'_, SqlitePool>,
+    database_url: String,
+    mode: String,
+) -> Result<Value, String> {
+    let database_url = database_url.trim();
+    if database_url.is_empty() {
+        return Err("Odoo PostgreSQL connection string is required".into());
+    }
+
+    let summary = match mode.as_str() {
+        "import" => ironcrm::db::import_from_odoo_into_pool(database_url, &state).await,
+        "sync_readonly" => ironcrm::db::inspect_odoo_postgres(database_url).await,
+        _ => return Err("Mode must be import or sync_readonly".into()),
+    }
+    .map_err(|e| e.to_string())?;
+
+    let message = if mode == "import" {
+        format!(
+            "Imported {} records from {} Odoo modules.",
+            summary.records, summary.module_count
+        )
+    } else {
+        format!(
+            "Connected read-only to {} Odoo modules.",
+            summary.module_count
+        )
+    };
+
+    Ok(serde_json::json!({
+        "status": "ok",
+        "mode": mode,
+        "message": message,
+        "modules": summary.modules,
+        "module_counts": summary.module_counts,
+        "module_count": summary.module_count,
+        "records": summary.records,
+        "relationships": summary.relationships,
+        "metadata_relationships": summary.metadata_relationships,
+        "warnings": summary.warnings
+    }))
+}
+
+#[tauri::command]
+fn detect_odoo() -> Value {
+    serde_json::to_value(ironcrm::db::detect_local_odoo()).unwrap_or_else(|_| {
+        serde_json::json!({
+            "found": false,
+            "message": "Could not prepare a local Odoo connection string."
+        })
     })
 }
 
@@ -283,6 +391,17 @@ async fn restore_workspace(state: State<'_, SqlitePool>, bundle: Value) -> Resul
 }
 
 #[tauri::command]
+async fn restore_workspace_exact(
+    state: State<'_, SqlitePool>,
+    bundle: Value,
+) -> Result<Value, String> {
+    ironcrm::db::restore_workspace_exact(&state, &bundle)
+        .await
+        .map(Value::Object)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn log_frontend(level: String, message: String) {
     match level.as_str() {
         "error" => tracing::error!("[JS] {}", message),
@@ -299,6 +418,67 @@ fn log_dir() -> PathBuf {
         return p;
     }
     PathBuf::from(".")
+}
+
+fn app_support_dir() -> PathBuf {
+    if let Ok(home) = std::env::var("HOME") {
+        let p = PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("IronCRM");
+        let _ = std::fs::create_dir_all(&p);
+        return p;
+    }
+
+    let p = std::env::temp_dir().join("IronCRM");
+    let _ = std::fs::create_dir_all(&p);
+    p
+}
+
+fn default_db_path() -> PathBuf {
+    let target = app_support_dir().join("ironcrm.db");
+    migrate_legacy_dev_db(&target);
+    target
+}
+
+fn migrate_legacy_dev_db(target: &Path) {
+    if target.exists() {
+        return;
+    }
+
+    let Ok(cwd) = std::env::current_dir() else {
+        return;
+    };
+    let legacy = cwd.join("ironcrm.db");
+    if legacy == target || !legacy.is_file() {
+        return;
+    }
+
+    if let Some(parent) = target.parent() {
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            tracing::warn!(
+                legacy = %legacy.display(),
+                target = %target.display(),
+                error = %error,
+                "could not prepare native database directory"
+            );
+            return;
+        }
+    }
+
+    match std::fs::copy(&legacy, target) {
+        Ok(_) => tracing::info!(
+            legacy = %legacy.display(),
+            target = %target.display(),
+            "migrated native database out of watched source tree"
+        ),
+        Err(error) => tracing::warn!(
+            legacy = %legacy.display(),
+            target = %target.display(),
+            error = %error,
+            "could not migrate native database"
+        ),
+    }
 }
 
 pub fn run() {
@@ -323,8 +503,12 @@ pub fn run() {
 
     tracing::info!(log = %log_path.display(), "IronCRM starting");
 
-    let db_path = std::env::var("LOCAL_DB_PATH").unwrap_or_else(|_| "ironcrm.db".to_string());
-    tracing::info!(%db_path, "database path");
+    let db_path = std::env::var("LOCAL_DB_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| default_db_path());
+    let db_path_display = db_path.display().to_string();
+    let db_path = db_path.to_string_lossy().to_string();
+    tracing::info!(db_path = %db_path_display, "database path");
 
     tauri::Builder::default()
         .setup(move |app| {
@@ -342,6 +526,10 @@ pub fn run() {
             get_module_records,
             get_module_record,
             search_records,
+            detect_suitecrm,
+            connect_suitecrm,
+            detect_odoo,
+            connect_odoo,
             create_record,
             update_record,
             delete_record,
@@ -350,6 +538,7 @@ pub fn run() {
             delete_record_link,
             export_workspace,
             restore_workspace,
+            restore_workspace_exact,
             log_frontend
         ])
         .run(tauri::generate_context!())

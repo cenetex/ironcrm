@@ -26,8 +26,13 @@ pub async fn run_server(db_path: &str, port: u16) -> Result<()> {
         .route("/health", get(api::health))
         .route("/api/v1/modules", get(api::list_modules))
         .route("/api/v1/search", get(api::search_records))
+        .route("/api/v1/suitecrm/detect", get(api::detect_suitecrm))
+        .route("/api/v1/suitecrm/connect", post(api::connect_suitecrm))
+        .route("/api/v1/odoo/detect", get(api::detect_odoo))
+        .route("/api/v1/odoo/connect", post(api::connect_odoo))
         .route("/api/v1/export", get(api::export_workspace))
         .route("/api/v1/restore", post(api::restore_workspace))
+        .route("/api/v1/restore/exact", post(api::restore_workspace_exact))
         .route("/api/v1/links/{link_id}", delete(api::delete_record_link))
         .route(
             "/api/v1/{module}/definition",
