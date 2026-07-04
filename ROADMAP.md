@@ -1,10 +1,10 @@
-# IronCRM Roadmap
+# White Warren Roadmap
 
-IronCRM's roadmap is portability-first: make the CRM useful every day, then prove that every bit of useful data can leave and be restored elsewhere. Advanced identity, signed credentials, scanner AI, sync, and decentralized storage are valuable only after that core loop is reliable.
+White Warren's roadmap is portability-first: make the CRM useful every day, then prove that every bit of useful data can leave and be restored elsewhere. Advanced identity, signed credentials, scanner AI, sync, and decentralized storage are valuable only after that core loop is reliable.
 
 ## Phase 1 - Daily CRM Loop
 
-**Goal:** IronCRM becomes a usable local CRM instead of a read-only viewer.
+**Goal:** White Warren becomes a usable local CRM instead of a read-only viewer.
 
 ### Core CRM
 
@@ -18,7 +18,7 @@ IronCRM's roadmap is portability-first: make the CRM useful every day, then prov
 
 ### Canonical schema
 
-- Define IronCRM-native structs for the five core modules.
+- Define White Warren-native structs for the five core modules.
 - Keep simple primary fields: primary email, primary phone, primary address, display name/title, etc.
 - Preserve overflow data in structured containers such as `extra_phones`, `extra_emails`, `custom_fields`, and `source_fields`.
 - Store import provenance: `source_system`, `source_module`, `source_id`, `imported_at`, and optional raw source payload.
@@ -37,7 +37,7 @@ IronCRM's roadmap is portability-first: make the CRM useful every day, then prov
 
 ## Phase 2 - Import Mapping Layer
 
-**Goal:** External data lands cleanly in IronCRM's canonical model.
+**Goal:** External data lands cleanly in White Warren's canonical model.
 
 ### SuiteCRM import
 
@@ -66,7 +66,7 @@ IronCRM's roadmap is portability-first: make the CRM useful every day, then prov
 
 ### Exit criteria
 
-- SuiteCRM and CSV imports produce normal editable IronCRM records.
+- SuiteCRM and CSV imports produce normal editable White Warren records.
 - Import summaries are clear enough for a non-technical user to trust the result.
 
 ## Phase 3 - Portable Bundle MVP
@@ -108,7 +108,7 @@ A bundle contains:
 
 ### Exit criteria
 
-- A user can export a `.ironcrm` bundle, move it to a clean IronCRM instance, import it, and see equivalent records, links, notes, schemas, custom fields, and consent records.
+- A user can export a `.ironcrm` bundle, move it to a clean White Warren instance, import it, and see equivalent records, links, notes, schemas, custom fields, and consent records.
 
 ## Phase 4 - Consent and Audit UX
 
@@ -143,7 +143,7 @@ A bundle contains:
 
 ### Stable portable IDs
 
-- Every record has an immutable IronCRM portable ID.
+- Every record has an immutable White Warren portable ID.
 - Imports preserve external IDs and map them to portable IDs.
 - Bundle restore preserves portable IDs.
 
@@ -165,7 +165,7 @@ A bundle contains:
 
 ## Phase 6 - Launch Hardening
 
-**Goal:** Prepare IronCRM for public users.
+**Goal:** Prepare White Warren for public users.
 
 ### Product
 
@@ -191,11 +191,11 @@ A bundle contains:
 
 ### Exit criteria
 
-- A non-developer can install IronCRM, import data, use it for daily CRM basics, export a backup, and restore that backup.
+- A non-developer can install White Warren, import data, use it for daily CRM basics, export a backup, and restore that backup.
 
 ## Phase 7 - Optional Modules
 
-**Goal:** Extend IronCRM without bloating the core product or weakening portability.
+**Goal:** Extend White Warren without bloating the core product or weakening portability.
 
 Optional modules must write data through documented module schemas and export their data through `.ironcrm` bundles.
 
@@ -245,6 +245,6 @@ These remain interesting, but they should not lead the product until the local C
 
 ### Ecosystem
 
-- Open IronCRM Portable Format specification.
+- Open White Warren Portable Format specification.
 - Community converters for Salesforce, HubSpot, Zoho, QuickBooks, and spreadsheets.
 - Web companion mode and mobile companion after sync foundations exist.

@@ -1,7 +1,7 @@
 {
-  "productName": "IronCRM",
+  "productName": "White Warren",
   "version": "0.1.0",
-  "identifier": "com.ironcrm.app",
+  "identifier": "com.whitewarren.app",
   "build": {
     "frontendDist": "../frontend",
     "beforeDevCommand": "",
@@ -10,7 +10,7 @@
   "app": {
     "windows": [
       {
-        "title": "IronCRM",
+        "title": "White Warren",
         "label": "main",
         "width": 1280,
         "height": 800,

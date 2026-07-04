@@ -82,6 +82,7 @@ try {
   const toolNames = listed.tools.map((tool) => tool.name);
   assert(toolNames.includes('ironcrm_search_records'), 'search tool should be listed');
   assert(toolNames.includes('ironcrm_create_record'), 'create tool should be listed');
+  assert(toolNames.includes('ironcrm_restore_record'), 'restore tool should be listed');
 
   const created = toolText(await request('tools/call', {
     name: 'ironcrm_create_record',
@@ -107,6 +108,31 @@ try {
     arguments: { module: 'contacts', id: created.id },
   }));
   assert(detail.data.email1 === 'ada@example.com', 'detail should return record fields');
+
+  await request('tools/call', {
+    name: 'ironcrm_update_record',
+    arguments: {
+      module: 'contacts',
+      id: created.id,
+      fields: { deleted: '1' },
+    },
+  });
+
+  const restore = toolText(await request('tools/call', {
+    name: 'ironcrm_restore_record',
+    arguments: { module: 'contacts', id: created.id },
+  }));
+  assert(restore.status === 'ok', 'restore should return ok');
+
+  const restored = toolText(await request('tools/call', {
+    name: 'ironcrm_get_record',
+    arguments: { module: 'contacts', id: created.id },
+  }));
+  assert(restored.data.email1 === 'ada@example.com', 'restore should make the record readable again');
+  assert(
+    restored.activities.some((activity) => activity.operation === 'restore'),
+    'restore should append activity'
+  );
 
   const resource = await request('resources/read', { uri: 'ironcrm://workspace/summary' });
   assert(resource.contents?.[0]?.text, 'workspace summary resource should return text');

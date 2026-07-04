@@ -3,8 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -1)"
-BUNDLE_DIR="$ROOT_DIR/dist/mcpb/ironcrm"
-OUTPUT="$ROOT_DIR/dist/ironcrm-mcp-$VERSION-darwin.mcpb"
+BUNDLE_DIR="$ROOT_DIR/dist/mcpb/white-warren"
+OUTPUT="$ROOT_DIR/dist/white-warren-mcp-$VERSION-darwin.mcpb"
 
 cd "$ROOT_DIR"
 cargo build --release

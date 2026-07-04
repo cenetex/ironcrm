@@ -82,7 +82,7 @@ impl HoloChain {
             previous_hash: "0000000000000000000000000000000000000000000000000000000000000000"
                 .to_string(),
             event: HoloEvent::Anchor {
-                note: "IronCRM license holonet genesis".into(),
+                note: "White Warren license holonet genesis".into(),
                 external_hash: None,
             },
             nonce: 0,

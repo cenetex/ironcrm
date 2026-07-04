@@ -1,4 +1,4 @@
-//! IronCRM Licensing Module
+//! White Warren Licensing Module
 //!
 //! A salted-commitment license key system with holonet audit chain.
 //!

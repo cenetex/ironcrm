@@ -1,6 +1,6 @@
-# IronCRM MCP Server
+# White Warren MCP Server
 
-IronCRM can run as a local stdio MCP server so Claude Desktop, Codex, and other MCP clients can inspect and update the same local CRM database used by the desktop app.
+White Warren can run as a local stdio MCP server so Claude Desktop, Codex, and other MCP clients can inspect and update the same local CRM database used by the desktop app.
 
 ## Quick Start
 
@@ -19,10 +19,10 @@ For client configuration, use the wrapper script so the MCP client does not need
 By default the MCP server opens:
 
 ```text
-~/Library/Application Support/IronCRM/ironcrm.db
+~/Library/Application Support/White Warren/white-warren.db
 ```
 
-Override it with either `LOCAL_DB_PATH` or `IRONCRM_DB`.
+Override it with `LOCAL_DB_PATH`, `WHITE_WARREN_DB`, or the legacy `IRONCRM_DB`.
 
 ## Claude Desktop
 
@@ -35,7 +35,7 @@ Open Claude Desktop settings, go to Developer settings, edit the MCP config, and
       "command": "/bin/bash",
       "args": ["/Users/ratimics/develop/ironcrm/scripts/ironcrm-mcp.sh"],
       "env": {
-        "LOCAL_DB_PATH": "/Users/ratimics/Library/Application Support/IronCRM/ironcrm.db"
+        "LOCAL_DB_PATH": "/Users/ratimics/Library/Application Support/White Warren/white-warren.db"
       }
     }
   }
@@ -65,7 +65,7 @@ args = ["/Users/ratimics/develop/ironcrm/scripts/ironcrm-mcp.sh"]
 enabled = true
 
 [mcp_servers.ironcrm.env]
-LOCAL_DB_PATH = "/Users/ratimics/Library/Application Support/IronCRM/ironcrm.db"
+LOCAL_DB_PATH = "/Users/ratimics/Library/Application Support/White Warren/white-warren.db"
 ```
 
 Restart Codex, or reload MCP servers from the app settings.

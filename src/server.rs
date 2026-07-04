@@ -31,8 +31,17 @@ pub async fn run_server(db_path: &str, port: u16) -> Result<()> {
         .route("/api/v1/odoo/detect", get(api::detect_odoo))
         .route("/api/v1/odoo/connect", post(api::connect_odoo))
         .route("/api/v1/export", get(api::export_workspace))
+        .route("/api/v1/export/archive", get(api::export_workspace_archive))
         .route("/api/v1/restore", post(api::restore_workspace))
         .route("/api/v1/restore/exact", post(api::restore_workspace_exact))
+        .route(
+            "/api/v1/restore/archive",
+            post(api::restore_workspace_archive),
+        )
+        .route(
+            "/api/v1/restore/archive/exact",
+            post(api::restore_workspace_archive_exact),
+        )
         .route("/api/v1/links/{link_id}", delete(api::delete_record_link))
         .route(
             "/api/v1/{module}/definition",
@@ -43,6 +52,7 @@ pub async fn run_server(db_path: &str, port: u16) -> Result<()> {
         .route("/api/v1/{module}/{id}", get(api::get_record))
         .route("/api/v1/{module}/{id}", put(api::update_record))
         .route("/api/v1/{module}/{id}", delete(api::delete_record))
+        .route("/api/v1/{module}/{id}/restore", post(api::restore_record))
         .route("/api/v1/{module}/{id}/notes", post(api::add_record_note))
         .route("/api/v1/{module}/{id}/links", post(api::link_record));
 
@@ -70,7 +80,7 @@ pub async fn run_server(db_path: &str, port: u16) -> Result<()> {
 
     let addr = format!("127.0.0.1:{}", port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    tracing::info!("IronCRM HTTP API on {}", addr);
+    tracing::info!("White Warren HTTP API on {}", addr);
     axum::serve(listener, app).await?;
     Ok(())
 }

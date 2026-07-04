@@ -1,7 +1,7 @@
 use anyhow::Context;
 use anyhow::Result;
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 use ironcrm::licensing::{LicenseKey, Licensor};
@@ -28,8 +28,11 @@ async fn main() -> Result<()> {
         }
         Some("mcp") => {
             let db_path = local_db_path();
-            tracing::info!(%db_path, "Starting IronCRM MCP server");
+            tracing::info!(%db_path, "Starting White Warren MCP server");
             ironcrm::mcp::run_mcp_server(&db_path).await?;
+        }
+        Some("validate") => {
+            run_validate_cli(&args[1..])?;
         }
         Some("license") => {
             run_license_cli(&args[1..]).await?;
@@ -44,7 +47,7 @@ async fn main() -> Result<()> {
         }
         #[cfg(not(feature = "http-server"))]
         _ => {
-            tracing::info!("IronCRM — local-first CRM engine");
+            tracing::info!("White Warren - local-first CRM engine");
             tracing::info!("The desktop app runs via the Tauri shell (cd src-tauri && cargo run).");
             tracing::info!("For the HTTP API plugin: cargo run --features http-server");
             tracing::info!("For SuiteCRM import: cargo run -- import");
@@ -53,8 +56,42 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+fn run_validate_cli(args: &[String]) -> Result<()> {
+    let path = args
+        .get(1)
+        .context("usage: cargo run -- validate <workspace.ironcrm|workspace.json>")?;
+    let bytes = std::fs::read(path).with_context(|| format!("could not read {}", path))?;
+
+    let summary = match ironcrm::bundle::validate_archive_bytes(&bytes) {
+        Ok(summary) => summary,
+        Err(archive_error) => {
+            let value: serde_json::Value = serde_json::from_slice(&bytes).with_context(|| {
+                format!(
+                    "file is neither a valid White Warren archive nor JSON bundle: {}",
+                    archive_error
+                )
+            })?;
+            ironcrm::bundle::validate_bundle_json(&value)?
+        }
+    };
+
+    println!("White Warren bundle OK");
+    println!("  kind: {}", summary.kind);
+    println!("  version: {}", summary.version);
+    println!("  app version: {}", summary.app_version);
+    println!("  generated: {}", summary.generated_at);
+    println!("  modules: {}", summary.modules);
+    println!("  records: {}", summary.records);
+    println!("  record links: {}", summary.record_links);
+    println!("  activities: {}", summary.activities);
+    println!("  consent receipts: {}", summary.consent_receipts);
+    println!("  source metadata rows: {}", summary.sources);
+    Ok(())
+}
+
 fn local_db_path() -> String {
     env::var("LOCAL_DB_PATH")
+        .or_else(|_| env::var("WHITE_WARREN_DB"))
         .or_else(|_| env::var("IRONCRM_DB"))
         .ok()
         .map(|path| path.trim().to_string())
@@ -79,15 +116,61 @@ fn expand_home_path(path: String) -> String {
 
 fn default_native_db_path() -> String {
     if let Ok(home) = env::var("HOME") {
-        PathBuf::from(home)
+        let target = PathBuf::from(home)
             .join("Library")
             .join("Application Support")
-            .join("IronCRM")
-            .join("ironcrm.db")
-            .to_string_lossy()
-            .to_string()
+            .join("White Warren")
+            .join("white-warren.db");
+        migrate_legacy_native_db(&target);
+        target.to_string_lossy().to_string()
     } else {
-        "ironcrm.db".into()
+        "white-warren.db".into()
+    }
+}
+
+fn migrate_legacy_native_db(target: &Path) {
+    if target.exists() {
+        return;
+    }
+
+    let Ok(home) = env::var("HOME") else {
+        return;
+    };
+
+    let legacy = PathBuf::from(home)
+        .join("Library")
+        .join("Application Support")
+        .join("IronCRM")
+        .join("ironcrm.db");
+
+    if !legacy.is_file() {
+        return;
+    }
+
+    if let Some(parent) = target.parent()
+        && let Err(error) = std::fs::create_dir_all(parent)
+    {
+        tracing::warn!(
+            legacy = %legacy.display(),
+            target = %target.display(),
+            error = %error,
+            "could not prepare branded database directory"
+        );
+        return;
+    }
+
+    match std::fs::copy(&legacy, target) {
+        Ok(_) => tracing::info!(
+            legacy = %legacy.display(),
+            target = %target.display(),
+            "migrated legacy desktop database into White Warren"
+        ),
+        Err(error) => tracing::warn!(
+            legacy = %legacy.display(),
+            target = %target.display(),
+            error = %error,
+            "could not migrate legacy desktop database"
+        ),
     }
 }
 

@@ -8,6 +8,11 @@ use tauri::Manager;
 use tauri::State;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
+const APP_NAME: &str = "White Warren";
+const LEGACY_APP_NAME: &str = "IronCRM";
+const DB_FILENAME: &str = "white-warren.db";
+const LEGACY_DB_FILENAME: &str = "ironcrm.db";
+
 #[derive(Serialize)]
 struct ModulesResponse {
     modules: Vec<String>,
@@ -316,6 +321,29 @@ async fn delete_record(
 }
 
 #[tauri::command]
+async fn restore_record(
+    state: State<'_, SqlitePool>,
+    module: String,
+    id: String,
+) -> Result<serde_json::Value, String> {
+    let has_def = ironcrm::module::has_definition(&state, &module)
+        .await
+        .map_err(|e| e.to_string())?;
+    if !has_def {
+        return Err(format!("Unknown module '{}'", module));
+    }
+
+    let restored = ironcrm::db::restore_record(&state, &module, &id)
+        .await
+        .map_err(|e| e.to_string())?;
+    if !restored {
+        return Err(format!("Record '{}' not found in '{}'", id, module));
+    }
+
+    Ok(serde_json::json!({"status": "ok", "id": id}))
+}
+
+#[tauri::command]
 async fn add_record_note(
     state: State<'_, SqlitePool>,
     module: String,
@@ -383,8 +411,26 @@ async fn export_workspace(state: State<'_, SqlitePool>) -> Result<Value, String>
 }
 
 #[tauri::command]
+async fn export_workspace_archive(state: State<'_, SqlitePool>) -> Result<Vec<u8>, String> {
+    ironcrm::db::export_workspace_archive(&state)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn restore_workspace(state: State<'_, SqlitePool>, bundle: Value) -> Result<Value, String> {
     ironcrm::db::restore_workspace(&state, &bundle)
+        .await
+        .map(Value::Object)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn restore_workspace_archive(
+    state: State<'_, SqlitePool>,
+    archive: Vec<u8>,
+) -> Result<Value, String> {
+    ironcrm::db::restore_workspace_archive(&state, &archive, false)
         .await
         .map(Value::Object)
         .map_err(|e| e.to_string())
@@ -402,6 +448,17 @@ async fn restore_workspace_exact(
 }
 
 #[tauri::command]
+async fn restore_workspace_archive_exact(
+    state: State<'_, SqlitePool>,
+    archive: Vec<u8>,
+) -> Result<Value, String> {
+    ironcrm::db::restore_workspace_archive(&state, &archive, true)
+        .await
+        .map(Value::Object)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn log_frontend(level: String, message: String) {
     match level.as_str() {
         "error" => tracing::error!("[JS] {}", message),
@@ -413,7 +470,7 @@ fn log_frontend(level: String, message: String) {
 
 fn log_dir() -> PathBuf {
     if let Ok(home) = std::env::var("HOME") {
-        let p = PathBuf::from(home).join("Library/Logs/IronCRM");
+        let p = PathBuf::from(home).join("Library/Logs").join(APP_NAME);
         let _ = std::fs::create_dir_all(&p);
         return p;
     }
@@ -425,20 +482,67 @@ fn app_support_dir() -> PathBuf {
         let p = PathBuf::from(home)
             .join("Library")
             .join("Application Support")
-            .join("IronCRM");
+            .join(APP_NAME);
         let _ = std::fs::create_dir_all(&p);
         return p;
     }
 
-    let p = std::env::temp_dir().join("IronCRM");
+    let p = std::env::temp_dir().join(APP_NAME);
     let _ = std::fs::create_dir_all(&p);
     p
 }
 
 fn default_db_path() -> PathBuf {
-    let target = app_support_dir().join("ironcrm.db");
+    let target = app_support_dir().join(DB_FILENAME);
+    migrate_legacy_app_db(&target);
     migrate_legacy_dev_db(&target);
     target
+}
+
+fn migrate_legacy_app_db(target: &Path) {
+    if target.exists() {
+        return;
+    }
+
+    let Ok(home) = std::env::var("HOME") else {
+        return;
+    };
+
+    let legacy = PathBuf::from(home)
+        .join("Library")
+        .join("Application Support")
+        .join(LEGACY_APP_NAME)
+        .join(LEGACY_DB_FILENAME);
+
+    if !legacy.is_file() {
+        return;
+    }
+
+    if let Some(parent) = target.parent() {
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            tracing::warn!(
+                legacy = %legacy.display(),
+                target = %target.display(),
+                error = %error,
+                "could not prepare branded database directory"
+            );
+            return;
+        }
+    }
+
+    match std::fs::copy(&legacy, target) {
+        Ok(_) => tracing::info!(
+            legacy = %legacy.display(),
+            target = %target.display(),
+            "migrated legacy desktop database into White Warren"
+        ),
+        Err(error) => tracing::warn!(
+            legacy = %legacy.display(),
+            target = %target.display(),
+            error = %error,
+            "could not migrate legacy desktop database"
+        ),
+    }
 }
 
 fn migrate_legacy_dev_db(target: &Path) {
@@ -449,7 +553,7 @@ fn migrate_legacy_dev_db(target: &Path) {
     let Ok(cwd) = std::env::current_dir() else {
         return;
     };
-    let legacy = cwd.join("ironcrm.db");
+    let legacy = cwd.join(LEGACY_DB_FILENAME);
     if legacy == target || !legacy.is_file() {
         return;
     }
@@ -483,7 +587,7 @@ fn migrate_legacy_dev_db(target: &Path) {
 
 pub fn run() {
     let log_dir = log_dir();
-    let log_path = log_dir.join("ironcrm.log");
+    let log_path = log_dir.join("white-warren.log");
     let file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -501,9 +605,11 @@ pub fn run() {
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .init();
 
-    tracing::info!(log = %log_path.display(), "IronCRM starting");
+    tracing::info!(log = %log_path.display(), "White Warren starting");
 
     let db_path = std::env::var("LOCAL_DB_PATH")
+        .or_else(|_| std::env::var("WHITE_WARREN_DB"))
+        .or_else(|_| std::env::var("IRONCRM_DB"))
         .map(PathBuf::from)
         .unwrap_or_else(|_| default_db_path());
     let db_path_display = db_path.display().to_string();
@@ -518,7 +624,7 @@ pub fn run() {
                     .expect("db connect")
             });
             app.manage(pool);
-            tracing::info!("IronCRM ready");
+            tracing::info!("White Warren ready");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -533,12 +639,16 @@ pub fn run() {
             create_record,
             update_record,
             delete_record,
+            restore_record,
             add_record_note,
             link_record,
             delete_record_link,
             export_workspace,
+            export_workspace_archive,
             restore_workspace,
+            restore_workspace_archive,
             restore_workspace_exact,
+            restore_workspace_archive_exact,
             log_frontend
         ])
         .run(tauri::generate_context!())

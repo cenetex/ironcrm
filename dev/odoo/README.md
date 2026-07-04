@@ -1,4 +1,4 @@
-# IronCRM Odoo Sandbox
+# White Warren Odoo Sandbox
 
 Start a local Odoo CRM sandbox:
 
@@ -12,7 +12,7 @@ Odoo web UI:
 http://127.0.0.1:8069
 ```
 
-IronCRM import connection:
+White Warren import connection:
 
 ```text
 postgres://odoo:odoo@127.0.0.1:5433/odoo

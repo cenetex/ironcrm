@@ -1,14 +1,14 @@
-# IronCRM
+# White Warren
 
 **The Portable CRM. Your customer data, in a file you control.**
 
-IronCRM is a local-first desktop CRM for small businesses that want useful relationship management without SaaS lock-in. It stores contacts, accounts, deals, notes, relationships, custom fields, and consent evidence locally, then exports everything in a complete `.ironcrm` bundle that can be restored into a fresh IronCRM instance.
+White Warren is a local-first desktop CRM for small businesses that want useful relationship management without SaaS lock-in. It stores contacts, accounts, deals, notes, relationships, custom fields, and consent evidence locally, then exports everything in a complete `.ironcrm` bundle that can be restored into a fresh White Warren instance.
 
 ## What it does
 
 - **Core CRM modules** — Accounts, Contacts, Leads, Opportunities, and Cases.
 - **Local-first engine** — SQLite-backed Rust backend with a Tauri desktop shell.
-- **SuiteCRM migration** — maps SuiteCRM records, relationships, and custom fields into IronCRM's canonical model.
+- **SuiteCRM migration** — maps SuiteCRM records, relationships, and custom fields into White Warren's canonical model.
 - **CSV / JSON import path** — external data flows through a shared mapping layer.
 - **Complete exports** — one-click `.ironcrm` bundle with records, schemas, relationships, activities, custom fields, consent records, and manifest metadata.
 - **Consent-aware records** — contacts can carry legal-basis/consent evidence and expiry status.
@@ -33,6 +33,9 @@ DATABASE_URL=mysql://suitecrm:suitecrm@localhost:3306/suitecrm cargo run -- impo
 
 # Run as a local MCP server for Claude Desktop / Codex
 cargo run -- mcp
+
+# Validate a portable workspace archive
+cargo run -- validate backup.ironcrm
 
 # Package the MCP server for Claude Desktop
 ./scripts/package-mcpb.sh
@@ -75,7 +78,7 @@ graph TD
 
 1. **Data outlasts the tool.** CRM data should remain meaningful after it leaves the app.
 2. **Export is a core workflow.** Export must be complete, one-click, documented, and tested by restore.
-3. **Local-first before networked.** IronCRM should be useful with no account, no server, and no internet connection.
+3. **Local-first before networked.** White Warren should be useful with no account, no server, and no internet connection.
 4. **Boring CRM beats clever infrastructure.** Contacts, accounts, notes, search, and pipeline management come first.
 5. **Consent is operational.** Users should know which contacts have consent/legal-basis evidence and what is expiring.
 6. **Modules extend the core.** Scanner and other extras should feed the same canonical schema and export format.

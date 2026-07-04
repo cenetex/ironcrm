@@ -48,6 +48,7 @@ sha2 = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 tempfile = { version = "3", optional = true }
 uuid = { version = "1", features = ["v4", "serde"] }
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [dev-dependencies]
 tempfile = "3"

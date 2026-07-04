@@ -61,18 +61,6 @@ pub async fn init_schema(pool: &SqlitePool) -> Result<()> {
 
     // ── Portability tables ──
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS did_registry (
-            module TEXT NOT NULL, record_id TEXT NOT NULL,
-            did TEXT NOT NULL UNIQUE,
-            did_document TEXT,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            PRIMARY KEY (module, record_id)
-        )",
-    )
-    .execute(pool)
-    .await?;
-
-    sqlx::query(
         "CREATE TABLE IF NOT EXISTS consent_receipts (
             contact_id TEXT PRIMARY KEY,
             credential_json TEXT NOT NULL,
@@ -1796,6 +1784,61 @@ pub async fn delete_record(pool: &SqlitePool, module: &str, id: &str) -> Result<
 
     Ok(true)
 }
+
+/// Restore a soft-deleted record by setting deleted=0.
+pub async fn restore_record(pool: &SqlitePool, module: &str, id: &str) -> Result<bool> {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT data FROM records WHERE module = ?1 AND id = ?2")
+            .bind(module)
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+
+    let Some((json,)) = row else {
+        return Ok(false);
+    };
+
+    let mut record: Map<String, Value> = serde_json::from_str(&json)?;
+    let was_deleted = is_deleted_value(record.get("deleted"));
+    if !was_deleted {
+        return Ok(true);
+    }
+
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+    record.insert("id".into(), Value::String(id.to_string()));
+    record.insert("deleted".into(), Value::String("0".into()));
+    record.insert("date_modified".into(), Value::String(now));
+
+    let json = serde_json::to_string(&record)?;
+    sqlx::query("INSERT OR REPLACE INTO records (module, id, data) VALUES (?, ?, ?)")
+        .bind(module)
+        .bind(id)
+        .bind(&json)
+        .execute(pool)
+        .await?;
+
+    if crate::module::has_definition(pool, module).await? {
+        upsert_typed_row(pool, module, id, &record).await?;
+    }
+
+    let mut changed_fields = Map::new();
+    changed_fields.insert("deleted".into(), Value::String("0".into()));
+    if let Some(date_modified) = record.get("date_modified") {
+        changed_fields.insert("date_modified".into(), date_modified.clone());
+    }
+    append_activity(pool, module, id, "restore", &changed_fields).await?;
+
+    Ok(true)
+}
+
+fn is_deleted_value(value: Option<&Value>) -> bool {
+    match value {
+        Some(Value::Bool(value)) => *value,
+        Some(Value::Number(value)) => value.as_i64().unwrap_or_default() != 0,
+        Some(Value::String(value)) => matches!(value.trim(), "1" | "true" | "TRUE" | "True"),
+        _ => false,
+    }
+}
 // ── SQLite queries (typed-table-aware) ──
 
 pub async fn query_module(
@@ -2106,292 +2149,30 @@ pub async fn search_records(
 }
 
 pub async fn export_workspace(pool: &SqlitePool) -> Result<Value> {
-    let definitions = crate::module::get_all_definitions(pool).await?;
-    let modules = discover_modules_sqlite(pool).await?;
-    let mut records = Vec::new();
-
-    for module in &modules {
-        for record in query_module(pool, module, 100_000, 0).await? {
-            records.push(serde_json::json!({
-                "module": module,
-                "data": record
-            }));
-        }
-    }
-
-    let activity_rows = sqlx::query(
-        "SELECT id, module, record_id, operation, actor_id, changed_fields, created_at
-         FROM activity_log
-         ORDER BY created_at ASC, id ASC",
-    )
-    .fetch_all(pool)
-    .await?;
-    let activities: Vec<Value> = activity_rows
-        .iter()
-        .map(|row| Value::Object(sqlite_row_to_map(row)))
-        .collect();
-
-    let link_rows = sqlx::query(
-        "SELECT id, source_module, source_id, target_module, target_id, relationship_type, created_at
-         FROM record_links
-         ORDER BY created_at ASC, id ASC",
-    )
-    .fetch_all(pool)
-    .await?;
-    let links: Vec<Value> = link_rows
-        .iter()
-        .map(|row| Value::Object(sqlite_row_to_map(row)))
-        .collect();
-
-    Ok(serde_json::json!({
-        "kind": "ironcrm.workspace",
-        "version": 1,
-        "exported_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
-        "module_definitions": definitions,
-        "records": records,
-        "activities": activities,
-        "record_links": links
-    }))
+    crate::bundle::export_workspace(pool).await
 }
 
-fn value_to_sql_string(value: Option<&Value>) -> String {
-    match value {
-        Some(Value::String(value)) => value.clone(),
-        Some(Value::Number(value)) => value.to_string(),
-        Some(Value::Bool(value)) => value.to_string(),
-        Some(Value::Null) | None => String::new(),
-        Some(value) => value.to_string(),
-    }
+pub async fn export_workspace_archive(pool: &SqlitePool) -> Result<Vec<u8>> {
+    crate::bundle::export_workspace_archive(pool).await
 }
 
 pub async fn restore_workspace(pool: &SqlitePool, bundle: &Value) -> Result<Map<String, Value>> {
-    ensure_workspace_bundle(bundle)?;
+    crate::bundle::restore_workspace(pool, bundle).await
+}
 
-    let mut restored_modules = 0u64;
-    let mut restored_records = 0u64;
-    let mut restored_activities = 0u64;
-    let mut restored_links = 0u64;
-
-    if let Some(definitions) = bundle.get("module_definitions").and_then(Value::as_array) {
-        for def_value in definitions {
-            let def: crate::module::ModuleDefinition = serde_json::from_value(def_value.clone())?;
-            let json = serde_json::to_string(&def)?;
-            sqlx::query(
-                "INSERT OR REPLACE INTO module_definitions
-                 (module, label, label_plural, def_json)
-                 VALUES (?1, ?2, ?3, ?4)",
-            )
-            .bind(&def.module)
-            .bind(&def.label)
-            .bind(&def.label_plural)
-            .bind(&json)
-            .execute(pool)
-            .await?;
-            sqlx::query(&crate::module::gen_create_table_sql(&def))
-                .execute(pool)
-                .await?;
-            for idx_sql in crate::module::gen_index_sqls(&def) {
-                sqlx::query(&idx_sql).execute(pool).await?;
-            }
-            restored_modules += 1;
-        }
-    }
-
-    if let Some(records) = bundle.get("records").and_then(Value::as_array) {
-        for record_value in records {
-            let Some(module) = record_value.get("module").and_then(Value::as_str) else {
-                continue;
-            };
-            let Some(data) = record_value.get("data").and_then(Value::as_object) else {
-                continue;
-            };
-            let Some(id) = data.get("id").and_then(Value::as_str) else {
-                continue;
-            };
-            let json = serde_json::to_string(data)?;
-            sqlx::query("INSERT OR REPLACE INTO records (module, id, data) VALUES (?1, ?2, ?3)")
-                .bind(module)
-                .bind(id)
-                .bind(json)
-                .execute(pool)
-                .await?;
-            if crate::module::has_definition(pool, module).await? {
-                upsert_typed_row(pool, module, id, data).await?;
-            }
-            restored_records += 1;
-        }
-    }
-
-    if let Some(activities) = bundle.get("activities").and_then(Value::as_array) {
-        for activity in activities {
-            let Some(activity) = activity.as_object() else {
-                continue;
-            };
-            let id = value_to_sql_string(activity.get("id"));
-            if id.is_empty() {
-                continue;
-            }
-            let changed_fields = match activity.get("changed_fields") {
-                Some(Value::String(value)) => value.clone(),
-                Some(value) => serde_json::to_string(value)?,
-                None => "{}".into(),
-            };
-            sqlx::query(
-                "INSERT OR REPLACE INTO activity_log
-                 (id, module, record_id, operation, actor_id, changed_fields, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            )
-            .bind(id)
-            .bind(value_to_sql_string(activity.get("module")))
-            .bind(value_to_sql_string(activity.get("record_id")))
-            .bind(value_to_sql_string(activity.get("operation")))
-            .bind(value_to_sql_string(activity.get("actor_id")))
-            .bind(changed_fields)
-            .bind(
-                activity
-                    .get("created_at")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-                    .unwrap_or_else(|| {
-                        chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-                    }),
-            )
-            .execute(pool)
-            .await?;
-            restored_activities += 1;
-        }
-    }
-
-    if let Some(links) = bundle.get("record_links").and_then(Value::as_array) {
-        for link in links {
-            let Some(link) = link.as_object() else {
-                continue;
-            };
-            let id = value_to_sql_string(link.get("id"));
-            if id.is_empty() {
-                continue;
-            }
-            sqlx::query(
-                "INSERT OR REPLACE INTO record_links
-                 (id, source_module, source_id, target_module, target_id, relationship_type, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            )
-            .bind(id)
-            .bind(value_to_sql_string(link.get("source_module")))
-            .bind(value_to_sql_string(link.get("source_id")))
-            .bind(value_to_sql_string(link.get("target_module")))
-            .bind(value_to_sql_string(link.get("target_id")))
-            .bind(
-                link.get("relationship_type")
-                    .and_then(Value::as_str)
-                    .unwrap_or("related"),
-            )
-            .bind(
-                link.get("created_at")
-                    .and_then(Value::as_str)
-                    .map(str::to_string)
-                    .unwrap_or_else(|| {
-                        chrono::Utc::now()
-                            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-                    }),
-            )
-            .execute(pool)
-            .await?;
-            restored_links += 1;
-        }
-    }
-
-    let mut result = Map::new();
-    result.insert("modules".into(), serde_json::json!(restored_modules));
-    result.insert("records".into(), serde_json::json!(restored_records));
-    result.insert("activities".into(), serde_json::json!(restored_activities));
-    result.insert("record_links".into(), serde_json::json!(restored_links));
-    Ok(result)
+pub async fn restore_workspace_archive(
+    pool: &SqlitePool,
+    bytes: &[u8],
+    exact: bool,
+) -> Result<Map<String, Value>> {
+    crate::bundle::restore_workspace_archive(pool, bytes, exact).await
 }
 
 pub async fn restore_workspace_exact(
     pool: &SqlitePool,
     bundle: &Value,
 ) -> Result<Map<String, Value>> {
-    ensure_workspace_bundle(bundle)?;
-    clear_workspace_data(pool, bundle).await?;
-    restore_workspace(pool, bundle).await
-}
-
-fn ensure_workspace_bundle(bundle: &Value) -> Result<()> {
-    let kind = bundle.get("kind").and_then(Value::as_str).unwrap_or("");
-    let version = bundle.get("version").and_then(Value::as_i64).unwrap_or(0);
-    anyhow::ensure!(
-        kind == "ironcrm.workspace",
-        "Not an IronCRM workspace bundle"
-    );
-    anyhow::ensure!(
-        version == 1,
-        "Unsupported IronCRM bundle version {}",
-        version
-    );
-    Ok(())
-}
-
-async fn clear_workspace_data(pool: &SqlitePool, bundle: &Value) -> Result<()> {
-    let mut modules = HashSet::new();
-    for def in crate::module::get_all_definitions(pool).await? {
-        modules.insert(def.module);
-    }
-    if let Some(definitions) = bundle.get("module_definitions").and_then(Value::as_array) {
-        for def_value in definitions {
-            if let Some(module) = def_value.get("module").and_then(Value::as_str) {
-                modules.insert(module.to_string());
-            }
-        }
-    }
-    if let Some(records) = bundle.get("records").and_then(Value::as_array) {
-        for record_value in records {
-            if let Some(module) = record_value.get("module").and_then(Value::as_str) {
-                modules.insert(module.to_string());
-            }
-        }
-    }
-
-    sqlx::query("DELETE FROM record_links")
-        .execute(pool)
-        .await?;
-    sqlx::query("DELETE FROM activity_log")
-        .execute(pool)
-        .await?;
-    sqlx::query("DELETE FROM records").execute(pool).await?;
-
-    for module in modules {
-        let Some(identifier) = sqlite_identifier(&module) else {
-            continue;
-        };
-        if sqlite_table_exists(pool, &module).await? {
-            let sql = format!("DELETE FROM {}", identifier);
-            sqlx::query(&sql).execute(pool).await?;
-        }
-    }
-
-    Ok(())
-}
-
-fn sqlite_identifier(identifier: &str) -> Option<String> {
-    if identifier.is_empty()
-        || !identifier
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-    {
-        return None;
-    }
-    Some(format!("\"{}\"", identifier))
-}
-
-async fn sqlite_table_exists(pool: &SqlitePool, table_name: &str) -> Result<bool> {
-    let row: Option<(String,)> =
-        sqlx::query_as("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1 LIMIT 1")
-            .bind(table_name)
-            .fetch_optional(pool)
-            .await?;
-    Ok(row.is_some())
+    crate::bundle::restore_workspace_exact(pool, bundle).await
 }
 
 // ── Relationships (blob store) ──
@@ -2617,6 +2398,16 @@ mod tests {
                 .expect("get deleted record")
                 .is_none()
         );
+        assert!(
+            restore_record(&pool, "contacts", &id)
+                .await
+                .expect("restore record")
+        );
+        let restored = get_module_record(&pool, "contacts", &id)
+            .await
+            .expect("get restored record")
+            .expect("restored record exists");
+        assert_eq!(restored.get("deleted").and_then(Value::as_i64), Some(0));
 
         let activities = get_record_activities(&pool, "contacts", &id, 10)
             .await
@@ -2630,11 +2421,12 @@ mod tests {
             })
             .collect();
 
-        assert_eq!(operations.len(), 4);
+        assert_eq!(operations.len(), 5);
         assert!(operations.contains(&"create".to_string()));
         assert!(operations.contains(&"update".to_string()));
         assert!(operations.contains(&"note".to_string()));
         assert!(operations.contains(&"delete".to_string()));
+        assert!(operations.contains(&"restore".to_string()));
     }
 
     #[tokio::test]
@@ -2645,6 +2437,11 @@ mod tests {
         contact.insert("first_name".into(), json!("Ada"));
         contact.insert("last_name".into(), json!("Lovelace"));
         contact.insert("email1".into(), json!("ada@example.com"));
+        contact.insert("source_system".into(), json!("suitecrm"));
+        contact.insert("source_module".into(), json!("Contacts"));
+        contact.insert("source_id".into(), json!("suite-contact-1"));
+        contact.insert("imported_at".into(), json!("2026-06-01T00:00:00Z"));
+        contact.insert("favorite_engine_c".into(), json!("Difference Engine"));
         let contact_id = create_record(&pool, "contacts", &contact)
             .await
             .expect("create contact");
@@ -2668,6 +2465,18 @@ mod tests {
         .expect("link records")
         .expect("link id");
         assert!(!link_id.is_empty());
+
+        sqlx::query(
+            "INSERT INTO consent_receipts (contact_id, credential_json, issued_at, expires_at)
+             VALUES (?1, ?2, ?3, ?4)",
+        )
+        .bind(&contact_id)
+        .bind(r#"{"legal_basis":"legitimate_interest","scope":"launch planning"}"#)
+        .bind("2026-06-01T00:00:00Z")
+        .bind("2028-06-01T00:00:00Z")
+        .execute(&pool)
+        .await
+        .expect("insert consent receipt");
 
         let relationships = get_relationships(&pool, "contacts", &contact_id)
             .await
@@ -2696,12 +2505,117 @@ mod tests {
         }));
 
         let bundle = export_workspace(&pool).await.expect("export workspace");
+        assert_eq!(
+            bundle.get("kind").and_then(Value::as_str),
+            Some("ironcrm.workspace")
+        );
+        assert_eq!(
+            bundle
+                .pointer("/manifest/counts/records")
+                .and_then(Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            bundle
+                .pointer("/manifest/counts/consent_receipts")
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        assert!(bundle.get("module_definitions").is_none());
+        assert!(bundle.get("relationships").is_none());
+        assert!(bundle.pointer("/manifest/counts/did_registry").is_none());
+        assert!(
+            bundle
+                .pointer("/manifest/counts/relationship_definitions")
+                .is_none()
+        );
+        assert!(
+            bundle
+                .pointer("/schemas/modules")
+                .and_then(Value::as_array)
+                .is_some_and(|modules| !modules.is_empty())
+        );
+        assert!(
+            bundle
+                .pointer("/manifest/hashes/records")
+                .and_then(Value::as_str)
+                .is_some_and(|hash| hash.starts_with("sha256:"))
+        );
+        assert!(
+            bundle
+                .get("records")
+                .and_then(Value::as_array)
+                .expect("bundle records")
+                .iter()
+                .any(|record| {
+                    record.get("module").and_then(Value::as_str) == Some("contacts")
+                        && record.pointer("/data/id").and_then(Value::as_str)
+                            == Some(contact_id.as_str())
+                        && record
+                            .pointer("/data/favorite_engine_c")
+                            .and_then(Value::as_str)
+                            == Some("Difference Engine")
+                })
+        );
+        assert!(
+            bundle
+                .get("sources")
+                .and_then(Value::as_array)
+                .expect("bundle sources")
+                .iter()
+                .any(|source| {
+                    source.get("record_id").and_then(Value::as_str) == Some(contact_id.as_str())
+                        && source.get("source_system").and_then(Value::as_str) == Some("suitecrm")
+                        && source
+                            .pointer("/custom_fields/favorite_engine_c")
+                            .and_then(Value::as_str)
+                            == Some("Difference Engine")
+                })
+        );
+
+        let archive = export_workspace_archive(&pool)
+            .await
+            .expect("export workspace archive");
+        let archive_summary =
+            crate::bundle::validate_archive_bytes(&archive).expect("validate archive");
+        assert_eq!(archive_summary.records, 2);
+        assert_eq!(archive_summary.record_links, 1);
+        assert_eq!(archive_summary.consent_receipts, 1);
+
+        let archive_pool = test_pool().await;
+        let archive_restore = restore_workspace_archive(&archive_pool, &archive, true)
+            .await
+            .expect("restore workspace archive exactly");
+        assert_eq!(
+            archive_restore.get("records").and_then(Value::as_u64),
+            Some(2)
+        );
+        let archive_contact = get_module_record(&archive_pool, "contacts", &contact_id)
+            .await
+            .expect("get archive-restored contact")
+            .expect("archive-restored contact exists");
+        assert_eq!(
+            archive_contact.get("email1").and_then(Value::as_str),
+            Some("ada@example.com")
+        );
+
+        let mut tampered_bundle = bundle.clone();
+        tampered_bundle["records"][0]["data"]["email1"] = json!("tampered@example.com");
+        let tampered_pool = test_pool().await;
+        let tampered_restore = restore_workspace(&tampered_pool, &tampered_bundle).await;
+        assert!(tampered_restore.is_err());
+
         let restored_pool = test_pool().await;
         let summary = restore_workspace(&restored_pool, &bundle)
             .await
             .expect("restore workspace");
         assert_eq!(summary.get("records").and_then(Value::as_u64), Some(2));
         assert_eq!(summary.get("record_links").and_then(Value::as_u64), Some(1));
+        assert_eq!(
+            summary.get("consent_receipts").and_then(Value::as_u64),
+            Some(1)
+        );
+        assert!(summary.get("did_registry").is_none());
 
         let restored_contact = get_module_record(&restored_pool, "contacts", &contact_id)
             .await
@@ -2710,6 +2624,20 @@ mod tests {
         assert_eq!(
             restored_contact.get("email1").and_then(Value::as_str),
             Some("ada@example.com")
+        );
+        let restored_blob: (String,) =
+            sqlx::query_as("SELECT data FROM records WHERE module = 'contacts' AND id = ?1")
+                .bind(&contact_id)
+                .fetch_one(&restored_pool)
+                .await
+                .expect("restored blob exists");
+        let restored_blob: Map<String, Value> =
+            serde_json::from_str(&restored_blob.0).expect("restored blob json");
+        assert_eq!(
+            restored_blob
+                .get("favorite_engine_c")
+                .and_then(Value::as_str),
+            Some("Difference Engine")
         );
 
         let restored_relationships = get_relationships(&restored_pool, "contacts", &contact_id)
@@ -2722,6 +2650,41 @@ mod tests {
                 .and_then(Value::as_str),
             Some("Analytical Engines Ltd")
         );
+
+        let mut extra_lead = Map::new();
+        extra_lead.insert("first_name".into(), json!("Temporary"));
+        extra_lead.insert("last_name".into(), json!("Lead"));
+        create_record(&restored_pool, "leads", &extra_lead)
+            .await
+            .expect("create extra lead before exact restore");
+        sqlx::query(
+            "INSERT OR REPLACE INTO consent_receipts (contact_id, credential_json)
+             VALUES (?1, ?2)",
+        )
+        .bind("temporary-contact")
+        .bind(r#"{"legal_basis":"temporary"}"#)
+        .execute(&restored_pool)
+        .await
+        .expect("insert temporary consent");
+
+        let exact_summary = restore_workspace_exact(&restored_pool, &bundle)
+            .await
+            .expect("exact restore workspace");
+        assert_eq!(
+            exact_summary.get("records").and_then(Value::as_u64),
+            Some(2)
+        );
+        assert_eq!(
+            count_module(&restored_pool, "leads")
+                .await
+                .expect("count leads"),
+            0
+        );
+        let consent_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM consent_receipts")
+            .fetch_one(&restored_pool)
+            .await
+            .expect("count restored consent");
+        assert_eq!(consent_count.0, 1);
     }
 
     #[tokio::test]

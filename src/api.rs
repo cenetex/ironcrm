@@ -1,8 +1,10 @@
 use crate::module::ModuleDefinition;
 use axum::{
     Json,
+    body::Bytes,
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{StatusCode, header},
+    response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -592,6 +594,52 @@ pub async fn delete_record(
     Ok(Json(serde_json::json!({"status": "ok", "id": id})))
 }
 
+pub async fn restore_record(
+    State(pool): State<SqlitePool>,
+    Path((module, id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    let has_def = crate::module::has_definition(&pool, &module)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    if !has_def {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("Unknown module '{}'", module),
+            }),
+        ));
+    }
+
+    let restored = crate::db::restore_record(&pool, &module, &id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+
+    if !restored {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                error: format!("Record '{}' not found in '{}'", id, module),
+            }),
+        ));
+    }
+
+    Ok(Json(serde_json::json!({"status": "ok", "id": id})))
+}
+
 pub async fn add_record_note(
     State(pool): State<SqlitePool>,
     Path((module, id)): Path<(String, String)>,
@@ -710,6 +758,34 @@ pub async fn export_workspace(
         })
 }
 
+pub async fn export_workspace_archive(
+    State(pool): State<SqlitePool>,
+) -> Result<Response, (StatusCode, Json<ErrorResponse>)> {
+    crate::db::export_workspace_archive(&pool)
+        .await
+        .map(|bytes| {
+            (
+                [
+                    (header::CONTENT_TYPE, crate::bundle::archive_content_type()),
+                    (
+                        header::CONTENT_DISPOSITION,
+                        "attachment; filename=\"white-warren-workspace.ironcrm\"",
+                    ),
+                ],
+                bytes,
+            )
+                .into_response()
+        })
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            )
+        })
+}
+
 pub async fn restore_workspace(
     State(pool): State<SqlitePool>,
     Json(bundle): Json<Value>,
@@ -719,8 +795,44 @@ pub async fn restore_workspace(
         .map(|summary| Json(Value::Object(summary)))
         .map_err(|e| {
             let message = e.to_string();
-            let status = if message.contains("IronCRM workspace bundle")
-                || message.contains("Unsupported IronCRM bundle version")
+            let status = if message.contains("White Warren workspace bundle")
+                || message.contains("Unsupported White Warren bundle version")
+            {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::INTERNAL_SERVER_ERROR
+            };
+            (status, Json(ErrorResponse { error: message }))
+        })
+}
+
+pub async fn restore_workspace_archive(
+    State(pool): State<SqlitePool>,
+    body: Bytes,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
+    restore_workspace_archive_bytes(pool, body, false).await
+}
+
+pub async fn restore_workspace_archive_exact(
+    State(pool): State<SqlitePool>,
+    body: Bytes,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
+    restore_workspace_archive_bytes(pool, body, true).await
+}
+
+async fn restore_workspace_archive_bytes(
+    pool: SqlitePool,
+    body: Bytes,
+    exact: bool,
+) -> Result<Json<Value>, (StatusCode, Json<ErrorResponse>)> {
+    crate::db::restore_workspace_archive(&pool, &body, exact)
+        .await
+        .map(|summary| Json(Value::Object(summary)))
+        .map_err(|e| {
+            let message = e.to_string();
+            let status = if message.contains("White Warren archive")
+                || message.contains("White Warren workspace bundle")
+                || message.contains("Unsupported White Warren bundle version")
             {
                 StatusCode::BAD_REQUEST
             } else {
@@ -739,8 +851,8 @@ pub async fn restore_workspace_exact(
         .map(|summary| Json(Value::Object(summary)))
         .map_err(|e| {
             let message = e.to_string();
-            let status = if message.contains("IronCRM workspace bundle")
-                || message.contains("Unsupported IronCRM bundle version")
+            let status = if message.contains("White Warren workspace bundle")
+                || message.contains("Unsupported White Warren bundle version")
             {
                 StatusCode::BAD_REQUEST
             } else {

@@ -7,7 +7,7 @@ const SERVER_NAME: &str = "ironcrm";
 
 pub async fn run_mcp_server(db_path: &str) -> Result<()> {
     let pool = crate::db::connect_sqlite(db_path).await?;
-    tracing::info!(db_path, "IronCRM MCP server ready");
+    tracing::info!(db_path, "White Warren MCP server ready");
 
     let stdin = io::stdin();
     let mut lines = BufReader::new(stdin).lines();
@@ -84,7 +84,7 @@ fn tools() -> Vec<Value> {
     vec![
         tool(
             "ironcrm_workspace_summary",
-            "Summarize the local IronCRM workspace, including modules and record counts.",
+            "Summarize the local White Warren workspace, including modules and record counts.",
             json!({ "type": "object", "properties": {}, "additionalProperties": false }),
         ),
         tool(
@@ -134,7 +134,7 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "ironcrm_create_record",
-            "Create a local IronCRM record.",
+            "Create a local White Warren record.",
             json!({
                 "type": "object",
                 "properties": {
@@ -147,7 +147,7 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "ironcrm_update_record",
-            "Update fields on a local IronCRM record.",
+            "Update fields on a local White Warren record.",
             json!({
                 "type": "object",
                 "properties": {
@@ -156,6 +156,19 @@ fn tools() -> Vec<Value> {
                     "fields": { "type": "object", "description": "Replacement field values keyed by CRM field name." }
                 },
                 "required": ["module", "id", "fields"],
+                "additionalProperties": false
+            }),
+        ),
+        tool(
+            "ironcrm_restore_record",
+            "Restore a soft-deleted White Warren record.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "module": { "type": "string" },
+                    "id": { "type": "string" }
+                },
+                "required": ["module", "id"],
                 "additionalProperties": false
             }),
         ),
@@ -196,7 +209,7 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "ironcrm_export_workspace",
-            "Export a complete IronCRM workspace bundle as JSON.",
+            "Export a complete White Warren workspace bundle as JSON.",
             json!({ "type": "object", "properties": {}, "additionalProperties": false }),
         ),
     ]
@@ -214,13 +227,13 @@ fn resources() -> Vec<Value> {
     vec![
         json!({
             "uri": "ironcrm://workspace/summary",
-            "name": "IronCRM workspace summary",
+            "name": "White Warren workspace summary",
             "description": "Module names and local record counts.",
             "mimeType": "application/json"
         }),
         json!({
             "uri": "ironcrm://modules",
-            "name": "IronCRM module definitions",
+            "name": "White Warren module definitions",
             "description": "CRM module schemas and field definitions.",
             "mimeType": "application/json"
         }),
@@ -298,6 +311,16 @@ async fn call_tool(pool: &SqlitePool, params: &Value) -> Result<Value> {
             ensure_module(pool, &module).await?;
             let updated = crate::db::update_record(pool, &module, &id, &fields).await?;
             if !updated {
+                return Err(anyhow!("Record '{id}' not found in '{module}'"));
+            }
+            json!({ "status": "ok", "module": module, "id": id })
+        }
+        "ironcrm_restore_record" => {
+            let module = string_arg(&arguments, "module")?;
+            let id = string_arg(&arguments, "id")?;
+            ensure_module(pool, &module).await?;
+            let restored = crate::db::restore_record(pool, &module, &id).await?;
+            if !restored {
                 return Err(anyhow!("Record '{id}' not found in '{module}'"));
             }
             json!({ "status": "ok", "module": module, "id": id })

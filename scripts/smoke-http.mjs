@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
 
 const root = new URL('..', import.meta.url).pathname;
+const execFileAsync = promisify(execFile);
 const port = String(3300 + Math.floor(Math.random() * 500));
 const tempDir = await mkdtemp(join(tmpdir(), 'ironcrm-smoke-'));
 const dbPath = join(tempDir, 'ironcrm.db');
@@ -37,6 +39,22 @@ async function request(path, options = {}) {
   return body;
 }
 
+async function requestBytes(path, options = {}) {
+  const response = await fetch(base + path, options);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (!response.ok) {
+    const error = new Error(`${path} failed with ${response.status}`);
+    error.response = response;
+    try {
+      error.body = JSON.parse(new TextDecoder().decode(bytes));
+    } catch {
+      error.body = {};
+    }
+    throw error;
+  }
+  return { response, bytes };
+}
+
 async function waitForHealth() {
   const deadline = Date.now() + 20_000;
   while (Date.now() < deadline) {
@@ -58,10 +76,13 @@ async function assertFrontendContract() {
   assert(!/onclick=|onsubmit=/.test(index + app), 'inline generated handlers should stay out of the frontend');
   assert(app.includes('data-action="open-detail"'), 'delegated action contract should exist');
   assert(app.includes('previewBundleSummary'), 'restore preview should be wired');
+  assert(app.includes('/api/v1/export/archive'), 'frontend export should prefer White Warren archive files');
+  assert(app.includes('/api/v1/restore/archive'), 'frontend restore should support White Warren archive files');
   assert(app.includes('link-type-select'), 'relationship labels should be selectable');
   assert(app.includes('connect-suitecrm'), 'SuiteCRM connection action should be wired');
   assert(app.includes('confirm-suitecrm-import'), 'SuiteCRM import review action should be wired');
   assert(app.includes('undo-suitecrm-import'), 'SuiteCRM undo action should be wired');
+  assert(app.includes('restore-deleted-record'), 'deleted records should have a UI restore path');
   assert(app.includes('/api/v1/odoo/connect'), 'Odoo connection action should be wired');
   assert(app.includes('open-odoo-wizard'), 'Odoo wizard navigation should be wired');
   assert(app.includes('data-action="show-dashboard"'), 'sidebar should expose a single Dashboard entry');
@@ -198,11 +219,51 @@ $sugar_config = array (
   const search = await request('/api/v1/search?q=COBOL&limit=10');
   assert(search.total === 1, 'note text should be searchable');
 
+  await request(`/api/v1/contacts/${contact.id}`, { method: 'DELETE' });
+  let deletedContactHidden = false;
+  try {
+    await request(`/api/v1/contacts/${contact.id}`);
+  } catch (error) {
+    deletedContactHidden = error.response && error.response.status === 404;
+  }
+  assert(deletedContactHidden, 'deleted contact should be hidden from normal detail reads');
+
+  await request(`/api/v1/contacts/${contact.id}/restore`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  const restoredDetail = await request(`/api/v1/contacts/${contact.id}`);
+  assert(restoredDetail.data.email1 === 'grace@example.com', 'restore should make contact readable again');
+  assert(
+    restoredDetail.activities.some((activity) => activity.operation === 'restore'),
+    'restore should append activity'
+  );
+
   const bundle = await request('/api/v1/export');
-  assert(bundle.kind === 'ironcrm.workspace', 'export should identify IronCRM bundles');
+  assert(bundle.kind === 'ironcrm.workspace', 'export should identify White Warren bundles');
   assert(bundle.version === 1, 'export should include supported bundle version');
+  assert(bundle.manifest?.counts?.records === 2, 'export manifest should count records');
+  assert(
+    typeof bundle.manifest?.hashes?.records === 'string' && bundle.manifest.hashes.records.startsWith('sha256:'),
+    'export manifest should include a record section hash'
+  );
+  assert(Array.isArray(bundle.schemas?.modules), 'export should include schema section modules');
+  assert(!('module_definitions' in bundle), 'export should not duplicate schemas at the top level');
   assert(bundle.records.length === 2, 'export should include created records');
   assert(bundle.record_links.length === 1, 'export should include record links');
+  assert(!('relationships' in bundle), 'export should not duplicate record links under relationships');
+
+  const archive = await requestBytes('/api/v1/export/archive');
+  assert(archive.bytes.length > 100, 'archive export should return bytes');
+  assert(
+    archive.response.headers.get('content-type')?.includes('application/vnd.ironcrm.workspace+zip'),
+    'archive export should use the White Warren archive content type'
+  );
+  const archivePath = join(tempDir, 'workspace.ironcrm');
+  await writeFile(archivePath, archive.bytes);
+  const validate = await execFileAsync(join(root, 'target/debug/ironcrm'), ['validate', archivePath], { cwd: root });
+  assert(validate.stdout.includes('White Warren bundle OK'), 'CLI validate should accept exported archives');
 
   let rejectedInvalidBundle = false;
   try {
@@ -214,7 +275,7 @@ $sugar_config = array (
   } catch (error) {
     rejectedInvalidBundle = error.response && error.response.status === 400;
   }
-  assert(rejectedInvalidBundle, 'restore should reject non-IronCRM bundles with HTTP 400');
+  assert(rejectedInvalidBundle, 'restore should reject non-White Warren bundles with HTTP 400');
 
   const restore = await request('/api/v1/restore', {
     method: 'POST',
@@ -223,6 +284,14 @@ $sugar_config = array (
   });
   assert(restore.records === 2, 'restore should report record count');
   assert(restore.record_links === 1, 'restore should report link count');
+
+  const archiveRestore = await request('/api/v1/restore/archive', {
+    method: 'POST',
+    headers: { 'content-type': 'application/vnd.ironcrm.workspace+zip' },
+    body: archive.bytes,
+  });
+  assert(archiveRestore.records === 2, 'archive restore should report record count');
+  assert(archiveRestore.record_links === 1, 'archive restore should report link count');
 
   await request('/api/v1/leads', {
     method: 'POST',
@@ -233,14 +302,14 @@ $sugar_config = array (
       status: 'New',
     }),
   });
-  const exactRestore = await request('/api/v1/restore/exact', {
+  const exactRestore = await request('/api/v1/restore/archive/exact', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(bundle),
+    headers: { 'content-type': 'application/vnd.ironcrm.workspace+zip' },
+    body: archive.bytes,
   });
-  assert(exactRestore.records === 2, 'exact restore should report restored record count');
+  assert(exactRestore.records === 2, 'exact archive restore should report restored record count');
   const leadsAfterExactRestore = await request('/api/v1/leads?limit=10');
-  assert(leadsAfterExactRestore.total === 0, 'exact restore should remove records created after snapshot');
+  assert(leadsAfterExactRestore.total === 0, 'exact archive restore should remove records created after snapshot');
 
   console.log(JSON.stringify({
     ok: true,

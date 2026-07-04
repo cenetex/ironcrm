@@ -6,12 +6,16 @@ var moduleDefs = {};   // module -> ModuleDefinition from API
 var currentModule = null;
 var currentView = 'table';
 var currentRows = [];
+var modulePageSize = 50;
+var currentModuleTotalRecords = 0;
+var currentModuleLoadingMore = false;
 var selectedRecordId = null;
 var searchQuery = '';
 var sidebarCollapsed = false;
 var detailOpen = false;
 var currentMainState = 'dashboard';
 var currentBoardStage = null;
+var currentSavedView = 'all';
 var collapsedStages = {};
 var currentDetailRecord = null;
 var currentDetailModule = null;
@@ -19,6 +23,7 @@ var currentDetailMode = 'view';
 var currentDetailRelationships = [];
 var currentDetailActivities = [];
 var pendingDeleteKey = null;
+var lastDeletedRecord = null;
 var importsMenuOpen = false;
 var draftRecordId = null;
 var searchResults = [];
@@ -29,6 +34,7 @@ var suiteCrmUrl = '';
 var suiteCrmStatus = null;
 var suiteCrmReview = null;
 var suiteCrmUndoSnapshot = null;
+var archiveContentType = 'application/vnd.ironcrm.workspace+zip';
 
 var isTauri = !!(window.__TAURI_INTERNALS__);
 var invoke = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke;
@@ -43,21 +49,80 @@ function log(level, msg, obj) {
     var text = msg + (obj !== undefined ? ' ' + JSON.stringify(obj) : '');
     invoke('log_frontend', { level: level, message: text }).catch(function(){});
   } else {
-    console.log('[IronCRM]', level, msg, obj !== undefined ? obj : '');
+    console.log('[White Warren]', level, msg, obj !== undefined ? obj : '');
   }
 }
 
-function toast(message) {
+function toast(message, action) {
   var region = document.getElementById('toast-region');
   var el = document.createElement('div');
   el.className = 'toast';
-  el.textContent = message;
+  var messageEl = document.createElement('span');
+  messageEl.textContent = message;
+  el.appendChild(messageEl);
+  if (action && action.label && action.action) {
+    var actionEl = document.createElement('button');
+    actionEl.type = 'button';
+    actionEl.className = 'toast-action';
+    actionEl.setAttribute('data-action', action.action);
+    actionEl.textContent = action.label;
+    el.appendChild(actionEl);
+  }
   region.appendChild(el);
   setTimeout(function() { el.classList.add('show'); }, 10);
   setTimeout(function() {
     el.classList.remove('show');
     setTimeout(function() { if (el.parentNode) el.parentNode.removeChild(el); }, 180);
-  }, 2200);
+  }, action ? 5200 : 2200);
+}
+
+function toUint8Array(value) {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  return new Uint8Array(value || []);
+}
+
+function isJsonFile(file) {
+  var name = (file && file.name || '').toLowerCase();
+  return name.endsWith('.json') || name.endsWith('.ironcrm.json') || file.type === 'application/json';
+}
+
+function downloadBlob(blob, filename) {
+  var url = URL.createObjectURL(blob);
+  var anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function fetchArchiveExport() {
+  if (isTauri && invoke) {
+    return toUint8Array(await invoke('export_workspace_archive'));
+  }
+  var response = await fetch('/api/v1/export/archive');
+  if (!response.ok) {
+    var err = await response.json().catch(function() { return { error: response.statusText }; });
+    throw new Error(err.error || response.statusText);
+  }
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+async function restoreArchiveBytes(bytes) {
+  var archive = toUint8Array(bytes);
+  if (isTauri && invoke) {
+    return invoke('restore_workspace_archive', { archive: Array.from(archive) });
+  }
+  var response = await fetch('/api/v1/restore/archive', {
+    method: 'POST',
+    headers: { 'Content-Type': archiveContentType },
+    body: archive
+  });
+  var body = await response.json().catch(function() { return {}; });
+  if (!response.ok) throw new Error(body.error || response.statusText);
+  return body;
 }
 
 var api = {
@@ -117,6 +182,9 @@ var api = {
       }
       if (parts.length === 6 && parts[1] === 'api' && parts[2] === 'v1' && parts[5] === 'notes') {
         return invoke('add_record_note', { module: parts[3], id: parts[4], note: body.note || '' });
+      }
+      if (parts.length === 6 && parts[1] === 'api' && parts[2] === 'v1' && parts[5] === 'restore') {
+        return invoke('restore_record', { module: parts[3], id: parts[4] });
       }
       if (parts.length === 6 && parts[1] === 'api' && parts[2] === 'v1' && parts[5] === 'links') {
         return invoke('link_record', {
@@ -227,6 +295,35 @@ function escapeAttr(s) {
   return escapeHtml(s);
 }
 
+function moduleIconKey(module) {
+  var value = String(module || '').toLowerCase();
+  if (value === 'accounts' || value === 'account') return 'account';
+  if (value === 'cases' || value === 'case') return 'case';
+  if (value === 'contacts' || value === 'contact') return 'contact';
+  if (value === 'leads' || value === 'lead') return 'lead';
+  if (value === 'opportunities' || value === 'opportunity') return 'opportunity';
+  return 'record';
+}
+
+function moduleIconSvg(key) {
+  var icons = {
+    account: '<path d="M4 20h16"/><path d="M6.5 20V8.5L12 5l5.5 3.5V20"/><path d="M9.5 20v-5h5v5"/><path d="M9.5 10.5h.01"/><path d="M14.5 10.5h.01"/>',
+    case: '<rect x="3.5" y="7" width="17" height="12" rx="2"/><path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7"/><path d="M3.5 12h17"/><path d="M12 11v2"/>',
+    contact: '<circle cx="12" cy="8" r="3.2"/><path d="M5.5 20c1.2-4 11.8-4 13 0"/>',
+    lead: '<path d="M12 3.5l1.7 5 5 1.8-5 1.7-1.7 5-1.7-5-5-1.7 5-1.8L12 3.5z"/><path d="M18.5 15.5l.7 2 2 .7-2 .7-.7 2-.7-2-2-.7 2-.7.7-2z"/>',
+    opportunity: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><path d="M12 12h.01"/>',
+    record: '<rect x="5" y="4" width="14" height="16" rx="2"/><path d="M8.5 9h7"/><path d="M8.5 13h7"/><path d="M8.5 17h4"/>'
+  };
+  return icons[key] || icons.record;
+}
+
+function renderModuleIcon(module, className) {
+  var key = moduleIconKey(module);
+  return '<span class="' + escapeAttr(className || 'module-icon') + ' module-glyph module-glyph-' + escapeAttr(key) + '" aria-hidden="true">' +
+    '<svg viewBox="0 0 24 24" focusable="false">' + moduleIconSvg(key) + '</svg>' +
+  '</span>';
+}
+
 function formatValue(key, value, row) {
   if (value === null || value === undefined || value === '') return '\u2014';
   if (key === 'full_name') {
@@ -276,6 +373,118 @@ function getStatusTone(module, row) {
   if (value.indexOf('negotiation') >= 0 || value.indexOf('in process') >= 0) return 'warning';
   if (value.indexOf('lost') >= 0 || value.indexOf('closed lost') >= 0) return 'danger';
   return 'neutral';
+}
+
+function normalizedStatus(row) {
+  return String((row && (row.sales_stage || row.status || row.priority)) || '').toLowerCase();
+}
+
+function isClosedRecord(row) {
+  var value = normalizedStatus(row);
+  return value.indexOf('closed') >= 0 || value.indexOf('won') >= 0 || value.indexOf('lost') >= 0 || value.indexOf('converted') >= 0 || value.indexOf('dead') >= 0;
+}
+
+function hasAnyField(row, keys) {
+  return keys.some(function(key) {
+    var value = row && row[key];
+    return value !== null && value !== undefined && String(value).trim() !== '';
+  });
+}
+
+function daysSinceRecordTouch(row) {
+  var value = row && (row.date_modified || row.date_entered || row.updated_at || row.created_at);
+  var time = value ? Date.parse(value) : NaN;
+  if (!Number.isFinite(time)) return Infinity;
+  return Math.floor((Date.now() - time) / 86400000);
+}
+
+function getSavedViews(module) {
+  var common = [
+    { id: 'all', label: 'All', hint: 'Every record' },
+    { id: 'recent', label: 'Recent', hint: 'Touched lately' }
+  ];
+  if (module === 'opportunities') {
+    return common.concat([
+      { id: 'open', label: 'Open pipeline', hint: 'Not closed' },
+      { id: 'no_amount', label: 'No amount', hint: 'Needs value' },
+      { id: 'stale', label: 'Stale', hint: 'No recent touch' }
+    ]);
+  }
+  if (module === 'leads') {
+    return common.concat([
+      { id: 'new', label: 'New leads', hint: 'Fresh intake' },
+      { id: 'missing_contact', label: 'Missing contact', hint: 'No email or phone' },
+      { id: 'stale', label: 'Stale', hint: 'No recent touch' }
+    ]);
+  }
+  if (module === 'cases') {
+    return common.concat([
+      { id: 'open', label: 'Open cases', hint: 'Not closed' },
+      { id: 'high_priority', label: 'High priority', hint: 'Urgent' },
+      { id: 'stale', label: 'Stale', hint: 'No recent touch' }
+    ]);
+  }
+  if (module === 'contacts') {
+    return common.concat([
+      { id: 'missing_email', label: 'No email', hint: 'Needs address' },
+      { id: 'missing_phone', label: 'No phone', hint: 'Needs number' }
+    ]);
+  }
+  if (module === 'accounts') {
+    return common.concat([
+      { id: 'missing_phone', label: 'No phone', hint: 'Needs number' },
+      { id: 'missing_address', label: 'No address', hint: 'Needs location' }
+    ]);
+  }
+  return common;
+}
+
+function rowMatchesSavedView(module, row, viewId) {
+  if (!viewId || viewId === 'all' || row.__draft) return true;
+  if (viewId === 'recent') return daysSinceRecordTouch(row) <= 14;
+  if (viewId === 'stale') return daysSinceRecordTouch(row) > 21 && !isClosedRecord(row);
+  if (viewId === 'open') return !isClosedRecord(row);
+  if (viewId === 'new') return normalizedStatus(row).indexOf('new') >= 0 || normalizedStatus(row) === '';
+  if (viewId === 'high_priority') return normalizedStatus(row).indexOf('high') >= 0;
+  if (viewId === 'no_amount') return !hasAnyField(row, ['amount']);
+  if (viewId === 'missing_contact') return !hasAnyField(row, ['email1', 'email2', 'phone_work', 'phone_mobile', 'phone_home']);
+  if (viewId === 'missing_email') return !hasAnyField(row, ['email1', 'email2']);
+  if (viewId === 'missing_phone') return !hasAnyField(row, ['phone_work', 'phone_mobile', 'phone_home', 'phone_office']);
+  if (viewId === 'missing_address') return !hasAnyField(row, ['billing_address_street', 'shipping_address_street', 'primary_address_street']);
+  return true;
+}
+
+function countSavedViewRows(module, viewId) {
+  return currentRows.filter(function(row) {
+    return rowMatchesSavedView(module, row, viewId);
+  }).length;
+}
+
+function loadedRecordCount() {
+  return currentRows.filter(function(row) {
+    return !row.__draft;
+  }).length;
+}
+
+function getCurrentModuleTotal() {
+  return Number(currentModuleTotalRecords || moduleCounts[currentModule] || loadedRecordCount() || 0);
+}
+
+function isPartialModuleLoaded() {
+  return !!currentModule && loadedRecordCount() < getCurrentModuleTotal();
+}
+
+function savedViewCountLabel(module, viewId) {
+  if (viewId === 'all') return formatCount(moduleCounts[module] || getCurrentModuleTotal());
+  return formatCount(countSavedViewRows(module, viewId)) + (isPartialModuleLoaded() ? '+' : '');
+}
+
+function renderLoadMoreControl() {
+  if (!isPartialModuleLoaded()) return '';
+  var remaining = Math.max(0, getCurrentModuleTotal() - loadedRecordCount());
+  return '<button type="button" class="detail-btn load-more-btn" data-action="load-more-records"' + (currentModuleLoadingMore ? ' disabled' : '') + '>' +
+    escapeHtml(currentModuleLoadingMore ? 'Loading...' : 'Load ' + formatCount(Math.min(modulePageSize, remaining)) + ' more') +
+  '</button>';
 }
 
 function stageId(module, name) {
@@ -350,6 +559,10 @@ function updateStageStripActive(stageIdValue) {
   }
 }
 
+function prefersReducedMotion() {
+  return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 function bindBoardScroll() {
   var boardView = document.getElementById('board-view');
   if (!boardView) return;
@@ -357,7 +570,8 @@ function bindBoardScroll() {
     var sections = boardView.querySelectorAll('.stage-section');
     var bestId = null;
     var bestDelta = Infinity;
-    var offset = boardView.scrollTop + (boardView.querySelector('.stage-strip') || {}).offsetHeight || 40 + 20;
+    var strip = boardView.querySelector('.stage-strip');
+    var offset = boardView.scrollTop + (strip ? strip.offsetHeight : 40) + 20;
     for (var i = 0; i < sections.length; i += 1) {
       var section = sections[i];
       var delta = Math.abs(section.offsetTop - offset);
@@ -374,9 +588,12 @@ function bindBoardScroll() {
 }
 
 function filterRows(rows) {
-  if (!searchQuery) return rows.slice();
+  var viewFiltered = currentModule
+    ? rows.filter(function(row) { return rowMatchesSavedView(currentModule, row, currentSavedView); })
+    : rows.slice();
+  if (!searchQuery) return viewFiltered;
   var q = searchQuery.toLowerCase();
-  return rows.filter(function(row) {
+  return viewFiltered.filter(function(row) {
     if (row.__draft) return true;
     return Object.keys(row).some(function(key) {
       var value = getCellValue(row, key);
@@ -412,8 +629,11 @@ function openOverviewItem(itemId) {
 function showDashboard() {
   currentModule = null;
   currentRows = [];
+  currentModuleTotalRecords = 0;
+  currentModuleLoadingMore = false;
   selectedRecordId = null;
   currentBoardStage = null;
+  currentSavedView = 'all';
   closeDetailPane();
   renderOverview();
   renderSidebar();
@@ -427,7 +647,7 @@ function renderSidebar() {
     var meta = getMeta(module);
     var count = moduleCounts[module] || 0;
     return '<button class="module-item' + (module === currentModule ? ' active' : '') + '" type="button" data-action="select-module" data-module="' + escapeAttr(module) + '">' +
-      '<span class="module-icon">' + escapeHtml(meta.icon) + '</span>' +
+      renderModuleIcon(module, 'module-icon') +
       '<span class="module-copy"><span class="module-name">' + escapeHtml(meta.title) + '</span><span class="module-subtitle">' + escapeHtml(meta.subtitle) + '</span></span>' +
       '<span class="module-count">' + escapeHtml(count) + '</span>' +
       '</button>';
@@ -486,6 +706,29 @@ function toggleSidebar(forceValue) {
   syncShellState();
 }
 
+function focusRecordRow(id) {
+  if (!id) return;
+  window.requestAnimationFrame(function() {
+    var row = document.querySelector('.data-row[data-record-id="' + id + '"]');
+    if (row && row.focus) row.focus({ preventScroll: true });
+  });
+}
+
+function openDetailPane(preferFormFocus) {
+  detailOpen = true;
+  document.getElementById('detail-pane').classList.remove('hidden');
+  document.getElementById('detail-empty').classList.add('hidden');
+  document.getElementById('detail-content').classList.remove('hidden');
+  syncShellState();
+  window.requestAnimationFrame(function() {
+    var selector = preferFormFocus
+      ? '#detail-form input, #detail-form textarea, #detail-form select, #detail-close'
+      : '#detail-close';
+    var target = document.querySelector(selector);
+    if (target && target.focus) target.focus({ preventScroll: true });
+  });
+}
+
 function closeDetailPane() {
   if (currentDetailMode === 'new') {
     removeDraftRow();
@@ -507,9 +750,9 @@ function closeDetailPane() {
 function suiteCrmModeCopy() {
   var provider = importProviderMeta();
   if (suiteCrmMode === 'sync_readonly') {
-    return 'Read ' + provider.label + ' data without writing back or loading records into IronCRM yet.';
+    return 'Read ' + provider.label + ' data without writing back or loading records into White Warren yet.';
   }
-  return 'Load ' + provider.label + ' records into this local workspace. Imported records become editable IronCRM records.';
+  return 'Load ' + provider.label + ' records into this local workspace. Imported records become editable White Warren records.';
 }
 
 function importProviderMeta() {
@@ -643,6 +886,8 @@ function openImportWizard(provider) {
   suiteCrmMode = suiteCrmMode || 'import';
   currentModule = null;
   currentRows = [];
+  currentModuleTotalRecords = 0;
+  currentModuleLoadingMore = false;
   selectedRecordId = null;
   currentBoardStage = null;
   closeDetailPane();
@@ -668,23 +913,17 @@ function renderDashboardKpis() {
   var cases = Number(moduleCounts.cases || 0);
   var contacts = Number(moduleCounts.contacts || 0);
   var accounts = Number(moduleCounts.accounts || 0);
-  var max = Math.max(totalRecords, opportunities + leads, leads + cases, contacts + accounts, 1);
   var items = [
-    { label: 'Records', value: totalRecords, detail: modules.length + ' modules loaded', bars: [totalRecords] },
-    { label: 'Pipeline', value: opportunities, detail: leads + ' leads in motion', bars: [opportunities, leads] },
-    { label: 'Needs attention', value: leads + cases, detail: leads + ' leads, ' + cases + ' cases', bars: [leads, cases] },
-    { label: 'Relationships', value: contacts + accounts, detail: contacts + ' contacts, ' + accounts + ' accounts', bars: [contacts, accounts] }
+    { label: 'Workspace', value: totalRecords, detail: modules.length + ' modules loaded' },
+    { label: 'Pipeline', value: opportunities, detail: leads + ' leads in motion' },
+    { label: 'Follow-up', value: leads + cases, detail: leads + ' leads, ' + cases + ' cases' },
+    { label: 'Network', value: contacts + accounts, detail: contacts + ' contacts, ' + accounts + ' accounts' }
   ];
   return '<section class="dashboard-kpis">' + items.map(function(item) {
-    var bars = item.bars.map(function(value) {
-      var width = Math.max(8, Math.round((Number(value || 0) / max) * 100));
-      return '<span style="width:' + escapeAttr(width) + '%"></span>';
-    }).join('');
     return '<div class="dashboard-kpi-card">' +
       '<div class="dashboard-action-label">' + escapeHtml(item.label) + '</div>' +
       '<strong>' + escapeHtml(formatCount(item.value)) + '</strong>' +
       '<p>' + escapeHtml(item.detail) + '</p>' +
-      '<div class="dashboard-mini-chart">' + bars + '</div>' +
     '</div>';
   }).join('') + '</section>';
 }
@@ -723,11 +962,81 @@ function renderDashboardRecordRow(module, row, metaText) {
   '</button>';
 }
 
+function dashboardRecordItems(module, limit) {
+  return getDashboardPreview(module, limit || 4).map(function(row) {
+    return { module: module, row: row };
+  });
+}
+
 function renderDashboardRecordList(items, emptyText) {
   if (!items.length) return '<div class="dashboard-section-empty">' + escapeHtml(emptyText) + '</div>';
   return items.map(function(item) {
     return renderDashboardRecordRow(item.module, item.row, item.meta);
   }).join('');
+}
+
+function getWorkspaceQueueItems() {
+  var queue = [];
+  dashboardRecordItems('leads', 3).forEach(function(item) {
+    queue.push({
+      module: item.module,
+      row: item.row,
+      meta: item.row.status || 'Lead',
+      reason: hasAnyField(item.row, ['email1', 'phone_work', 'phone_mobile']) ? 'Ready for follow-up' : 'Missing contact path'
+    });
+  });
+  dashboardRecordItems('cases', 3).forEach(function(item) {
+    queue.push({
+      module: item.module,
+      row: item.row,
+      meta: item.row.priority || item.row.status || 'Case',
+      reason: isClosedRecord(item.row) ? 'Recently closed' : 'Customer issue open'
+    });
+  });
+  dashboardRecordItems('opportunities', 3).forEach(function(item) {
+    queue.push({
+      module: item.module,
+      row: item.row,
+      meta: item.row.sales_stage || 'Opportunity',
+      reason: hasAnyField(item.row, ['amount']) ? 'Pipeline movement' : 'Needs value'
+    });
+  });
+  return queue.slice(0, 6);
+}
+
+function renderWorkspaceQueue() {
+  var items = getWorkspaceQueueItems();
+  var list = items.length ? items.map(function(item) {
+    var meta = getMeta(item.module);
+    return '<button type="button" class="work-queue-row tone-' + escapeAttr(getStatusTone(item.module, item.row)) + '" data-action="open-detail" data-module="' + escapeAttr(item.module) + '" data-record-id="' + escapeAttr(item.row.id) + '">' +
+      renderModuleIcon(item.module, 'work-queue-icon') +
+      '<span class="work-queue-copy"><strong>' + escapeHtml(getRecordLabel(item.module, item.row)) + '</strong><small>' + escapeHtml(item.reason) + '</small></span>' +
+      '<span class="work-queue-meta">' + escapeHtml(item.meta) + '</span>' +
+    '</button>';
+  }).join('') : '<div class="dashboard-section-empty">Nothing is waiting yet. Import records or create your first opportunity.</div>';
+  return '<section class="dashboard-command-card dashboard-command-primary">' +
+    '<div class="dashboard-section-head"><div><div class="dashboard-action-label">Today</div><h3>Work queue</h3></div><button type="button" class="detail-btn section-btn" data-action="overview" data-item-id="inbox">Open</button></div>' +
+    '<p>Leads, cases, and opportunities with the strongest next-customer signal.</p>' +
+    '<div class="work-queue-list">' + list + '</div>' +
+  '</section>';
+}
+
+function renderModuleHealth() {
+  var rows = modules.map(function(module) {
+    var meta = getMeta(module);
+    var count = Number(moduleCounts[module] || 0);
+    var status = count ? 'Ready' : 'Empty';
+    return '<button type="button" class="module-health-row" data-action="select-module" data-module="' + escapeAttr(module) + '">' +
+      renderModuleIcon(module, 'module-health-icon') +
+      '<span class="module-health-copy"><strong>' + escapeHtml(meta.title) + '</strong><small>' + escapeHtml(status) + '</small></span>' +
+      '<span class="module-health-count">' + escapeHtml(formatCount(count)) + '</span>' +
+    '</button>';
+  }).join('');
+  return '<section class="dashboard-command-card">' +
+    '<div class="dashboard-section-head"><div><div class="dashboard-action-label">Coverage</div><h3>Modules</h3></div></div>' +
+    '<p>Record counts across the local workspace.</p>' +
+    '<div class="module-health-list">' + rows + '</div>' +
+  '</section>';
 }
 
 function renderDashboardSections() {
@@ -742,8 +1051,12 @@ function renderDashboardSections() {
   }).concat(getDashboardPreview('cases', 2).map(function(row) {
     return { module: 'cases', row: row, meta: row.priority || row.status || 'Case' };
   })).slice(0, 4);
-  return '<section class="dashboard-sections">' +
-    '<div class="dashboard-section-card">' +
+  return '<section class="dashboard-command-grid">' +
+    renderWorkspaceQueue() +
+    renderModuleHealth() +
+  '</section>' +
+  '<section class="dashboard-sections">' +
+    '<div class="dashboard-section-card dashboard-section-wide">' +
       '<div class="dashboard-section-head"><h3>Recent</h3><button type="button" class="detail-btn section-btn" data-action="overview" data-item-id="recent">Open</button></div>' +
       '<p>Jump back into local records without leaving the dashboard.</p>' +
       '<div class="dashboard-section-list">' + renderDashboardRecordList(recentItems, 'No local records yet.') + '</div>' +
@@ -792,7 +1105,7 @@ function renderSearchResults(isLoading) {
     var meta = getMeta(module);
     var match = row._match === 'activity' ? 'Activity match' : meta.title;
     return '<button type="button" class="search-result-row" data-action="open-detail" data-module="' + escapeAttr(module) + '" data-record-id="' + escapeAttr(row.id) + '">' +
-      '<span class="search-result-icon">' + escapeHtml(meta.icon) + '</span>' +
+      renderModuleIcon(module, 'search-result-icon') +
       '<span class="search-result-copy"><span class="search-result-title">' + escapeHtml(getRecordLabel(module, row)) + '</span><span class="search-result-subtitle">' + escapeHtml(match + ' · ' + (getRecordSubtitle(module, row) || meta.subtitle)) + '</span></span>' +
       '</button>';
   }).join('') + '</section>';
@@ -831,6 +1144,8 @@ function setMainState(state) {
   document.getElementById('table-view').classList.toggle('hidden', state !== 'table');
   document.getElementById('board-view').classList.toggle('hidden', state !== 'board');
   document.getElementById('empty-state').classList.toggle('hidden', state !== 'empty');
+  var listBar = document.getElementById('list-workspace-bar');
+  if (listBar && state !== 'table') listBar.innerHTML = '';
   renderOverview();
   var emptyCreateBtn = document.getElementById('empty-create-btn');
   var emptyCopy = document.getElementById('empty-state-copy');
@@ -842,25 +1157,71 @@ function setMainState(state) {
   }
 }
 
+function renderListWorkspaceBar(totalRows, visibleRows) {
+  var bar = document.getElementById('list-workspace-bar');
+  if (!bar || !currentModule) return;
+  var meta = getMeta(currentModule);
+  var views = getSavedViews(currentModule);
+  var active = views.filter(function(view) { return view.id === currentSavedView; })[0] || views[0];
+  var loaded = loadedRecordCount();
+  var total = getCurrentModuleTotal();
+  var loadedStat = loaded < total ? '<span>' + escapeHtml(formatCount(loaded)) + ' loaded</span>' : '';
+  bar.innerHTML =
+    '<section class="list-command-center">' +
+      '<div class="list-command-main">' +
+        '<div class="list-kicker">' + escapeHtml(meta.title) + ' list</div>' +
+        '<div class="list-command-title"><span>' + escapeHtml(active.label) + '</span><small>' + escapeHtml(active.hint) + '</small></div>' +
+      '</div>' +
+      '<div class="list-command-actions">' +
+        '<div class="list-command-stats">' +
+          '<span>' + escapeHtml(formatCount(visibleRows.length)) + ' visible</span>' +
+          loadedStat +
+          '<span>' + escapeHtml(formatCount(total)) + ' total</span>' +
+        '</div>' +
+        renderLoadMoreControl() +
+      '</div>' +
+    '</section>' +
+    '<section class="saved-view-row">' +
+      '<div class="saved-view-scroll">' + renderSavedViewChips(currentModule) + '</div>' +
+    '</section>';
+}
+
+function renderSavedViewChips(module) {
+  return getSavedViews(module).map(function(view) {
+    return '<button type="button" class="saved-view-chip' + (view.id === currentSavedView ? ' active' : '') + '" data-action="select-saved-view" data-view-id="' + escapeAttr(view.id) + '">' +
+      '<span>' + escapeHtml(view.label) + '</span>' +
+      '<small>' + escapeHtml(savedViewCountLabel(module, view.id)) + '</small>' +
+    '</button>';
+  }).join('');
+}
+
 function renderTable(rows) {
-  if (!rows.length) {
+  var meta = getMeta(currentModule);
+  var columns = meta.columns.slice();
+  if (!rows.length && !currentRows.length) {
     setMainState('empty');
+    var emptyBar = document.getElementById('list-workspace-bar');
+    if (emptyBar) emptyBar.innerHTML = '';
     return;
   }
   setMainState('table');
 
-  var meta = getMeta(currentModule);
-  var columns = meta.columns.slice();
+  renderListWorkspaceBar(currentRows, rows);
   document.getElementById('table-head').innerHTML = '<tr>' + columns.map(function(key) {
     return '<th>' + escapeHtml(titleize(key === 'full_name' ? 'name' : key)) + '</th>';
   }).join('') + '</tr>';
+
+  if (!rows.length) {
+    document.getElementById('table-body').innerHTML = '<tr class="table-empty-row"><td colspan="' + escapeAttr(Math.max(columns.length, 1)) + '"><div class="table-empty-state">No records match this view.</div></td></tr>';
+    return;
+  }
 
   document.getElementById('table-body').innerHTML = rows.map(function(row) {
     var label = getRecordLabel(currentModule, row);
     var subtitle = getRecordSubtitle(currentModule, row);
     var selected = row.id === selectedRecordId ? ' selected' : '';
     var rowAction = row.__draft ? 'edit-draft' : 'open-detail';
-    return '<tr class="data-row' + selected + (row.__draft ? ' draft-row' : '') + '" data-action="' + rowAction + '" data-module="' + escapeAttr(currentModule) + '" data-record-id="' + escapeAttr(row.id) + '">' + columns.map(function(key, index) {
+    return '<tr class="data-row' + selected + (row.__draft ? ' draft-row' : '') + '" role="button" tabindex="0" data-action="' + rowAction + '" data-module="' + escapeAttr(currentModule) + '" data-record-id="' + escapeAttr(row.id) + '">' + columns.map(function(key, index) {
       var value = formatValue(key, getCellValue(row, key), row);
       if (index === 0) {
         return '<td><div class="primary-cell"><div class="primary-title">' + escapeHtml(value) + '</div><div class="primary-subtitle">' + escapeHtml(subtitle || label) + '</div></div></td>';
@@ -871,7 +1232,7 @@ function renderTable(rows) {
 }
 
 function renderBoard(rows) {
-  if (!rows.length) {
+  if (!rows.length && !currentRows.length) {
     setMainState('empty');
     return;
   }
@@ -879,7 +1240,19 @@ function renderBoard(rows) {
 
   var groups = getBoardGroups(currentModule, rows);
   var activeStage = ensureBoardStage(currentModule, groups);
-  var html = '<div class="stage-strip">' + groups.map(function(group) {
+  var activeView = getSavedViews(currentModule).filter(function(view) { return view.id === currentSavedView; })[0] || getSavedViews(currentModule)[0];
+  var loaded = loadedRecordCount();
+  var total = getCurrentModuleTotal();
+  var partialCopy = loaded < total ? ' · ' + formatCount(loaded) + ' loaded of ' + formatCount(total) : '';
+  var html = '<section class="board-command-bar">' +
+    '<div><div class="list-kicker">' + escapeHtml(getMeta(currentModule).title) + ' board</div><div class="list-command-title"><span>' + escapeHtml(activeView.label) + '</span><small>' + escapeHtml(rows.length) + ' visible records' + partialCopy + '</small></div></div>' +
+    '<div class="board-command-actions"><div class="saved-view-scroll">' + renderSavedViewChips(currentModule) + '</div>' + renderLoadMoreControl() + '</div>' +
+  '</section>';
+  if (!rows.length) {
+    document.getElementById('board-view').innerHTML = html + '<div class="board-empty-state">No records match this board view.</div>';
+    return;
+  }
+  html += '<div class="stage-strip">' + groups.map(function(group) {
     return '<button type="button" class="stage-pill' + (group.id === activeStage ? ' active' : '') + '" data-action="scroll-stage" data-stage-id="' + escapeAttr(group.id) + '">' +
       '<span class="stage-pill-label">' + escapeHtml(group.name) + '</span>' +
       '<span class="stage-pill-count">' + escapeHtml(group.items.length) + '</span>' +
@@ -891,7 +1264,7 @@ function renderBoard(rows) {
       : group.items.length + ' records';
     var collapsed = !!collapsedStages[stageCollapseKey(currentModule, group.id)];
     return '<section class="stage-section" data-stage-id="' + escapeAttr(group.id) + '">' +
-      '<div class="stage-section-header' + (collapsed ? ' collapsed' : '') + '" data-action="toggle-stage" data-stage-id="' + escapeAttr(group.id) + '">' +
+      '<div class="stage-section-header' + (collapsed ? ' collapsed' : '') + '" role="button" tabindex="0" aria-expanded="' + (collapsed ? 'false' : 'true') + '" data-action="toggle-stage" data-stage-id="' + escapeAttr(group.id) + '">' +
         '<div><div class="stage-section-kicker">' + escapeHtml(titleize(currentModule)) + '</div><div class="stage-section-title">' + escapeHtml(group.name) + '</div></div>' +
         '<div class="stage-section-tools"><div class="stage-section-rollup">' + escapeHtml(rollup) + '</div><div class="stage-section-chevron">' + (collapsed ? '\u25B6' : '\u25BC') + '</div></div>' +
       '</div>' +
@@ -922,7 +1295,7 @@ function scrollToBoardStage(stageIdValue) {
   var target = boardView && boardView.querySelector('.stage-section[data-stage-id="' + stageIdValue + '"]');
   if (!boardView || !target) return;
   var stripHeight = (boardView.querySelector('.stage-strip') || {}).offsetHeight || 40;
-  boardView.scrollTo({ top: target.offsetTop - stripHeight + 2, behavior: 'smooth' });
+  boardView.scrollTo({ top: target.offsetTop - stripHeight + 2, behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
 }
 
 function toggleStageSection(stageIdValue) {
@@ -988,11 +1361,7 @@ function renderDetail(module, record, relationships, activities) {
   currentDetailRelationships = relationships || [];
   currentDetailActivities = activities || [];
   currentDetailMode = 'view';
-  detailOpen = true;
-  document.getElementById('detail-pane').classList.remove('hidden');
-  document.getElementById('detail-empty').classList.add('hidden');
-  document.getElementById('detail-content').classList.remove('hidden');
-  syncShellState();
+  openDetailPane(false);
 
   var title = getRecordLabel(module, record);
   var subtitle = getRecordSubtitle(module, record);
@@ -1025,7 +1394,7 @@ function renderDetail(module, record, relationships, activities) {
 
   var overviewFields = coreFields.slice(0, 10).map(function(key) {
     return '<div class="detail-field"><span class="label">' + escapeHtml(titleize(key)) + '</span><span class="value">' + escapeHtml(formatValue(key, getCellValue(record, key), record)) + '</span></div>';
-  }).join('');
+  }).join('') || '<div class="section-empty">No primary fields yet.</div>';
 
   var relatedHtml = relationships && relationships.length
     ? relationships.map(function(rel) {
@@ -1056,11 +1425,17 @@ function renderDetail(module, record, relationships, activities) {
   var activityHtml = activities && activities.length
     ? activities.map(renderActivityEntry).join('')
     : '<div class="section-empty">No activity yet.</div>';
+  var sourceKeys = ['source_system', 'source_module', 'source_id', 'date_entered', 'date_modified', 'created_by'];
+  var sourceFields = sourceKeys.map(function(key) {
+    var value = formatValue(key, getCellValue(record, key), record);
+    return value === '\u2014' ? '' : '<div class="detail-field"><span class="label">' + escapeHtml(titleize(key)) + '</span><span class="value">' + escapeHtml(value) + '</span></div>';
+  }).filter(Boolean).join('') || '<div class="section-empty">No source metadata available.</div>';
 
   document.getElementById('detail-sections').innerHTML =
-    '<section class="detail-section"><div class="section-head-row"><div class="section-head">Overview</div></div><div class="detail-fields">' + overviewFields + '</div></section>' +
-    '<section class="detail-section"><div class="section-head-row"><div class="section-head">Related</div><button type="button" class="detail-btn section-btn" data-action="find-link-targets">Find</button></div>' + linkComposer + '<div class="related-list">' + relatedHtml + '</div></section>' +
-    '<section class="detail-section"><div class="section-head-row"><div class="section-head">Activity</div><button type="button" class="detail-btn primary-detail-btn section-btn" data-action="save-note">Add note</button></div>' + noteComposer + '<div class="timeline">' + activityHtml + '</div></section>';
+    '<section class="detail-section detail-card"><div class="section-head-row"><div><div class="section-head">Overview</div><p>Primary fields and quick context.</p></div></div><div class="detail-fields">' + overviewFields + '</div></section>' +
+    '<section class="detail-section detail-card"><div class="section-head-row"><div><div class="section-head">Related</div><p>Connected people, accounts, and work.</p></div><button type="button" class="detail-btn section-btn" data-action="find-link-targets">Find</button></div>' + linkComposer + '<div class="related-list">' + relatedHtml + '</div></section>' +
+    '<section class="detail-section detail-card"><div class="section-head-row"><div><div class="section-head">Activity</div><p>Notes and changes for this record.</p></div><button type="button" class="detail-btn primary-detail-btn section-btn" data-action="save-note">Add note</button></div>' + noteComposer + '<div class="timeline">' + activityHtml + '</div></section>' +
+    '<section class="detail-section detail-card"><div class="section-head-row"><div><div class="section-head">Source</div><p>Import and portability context.</p></div></div><div class="detail-fields">' + sourceFields + '</div></section>';
 }
 
 function applyCurrentView() {
@@ -1076,7 +1451,7 @@ function applyCurrentView() {
     return;
   }
   renderToolbar(currentModule);
-  if (!filtered.length) {
+  if (!filtered.length && !currentRows.length) {
     setMainState('empty');
     return;
   }
@@ -1091,6 +1466,12 @@ function changeView(view) {
   applyCurrentView();
 }
 
+function selectSavedView(viewId) {
+  currentSavedView = viewId || 'all';
+  currentBoardStage = null;
+  applyCurrentView();
+}
+
 async function selectModule(module) {
   searchQuery = '';
   searchResults = [];
@@ -1098,18 +1479,22 @@ async function selectModule(module) {
   if (searchInput) searchInput.value = '';
   currentModule = module;
   currentView = getMeta(module).defaultView;
+  currentSavedView = 'all';
   currentBoardStage = null;
   draftRecordId = null;
+  currentModuleTotalRecords = 0;
+  currentModuleLoadingMore = false;
   closeDetailPane();
   renderOverview();
   renderSidebar();
   renderToolbar(module);
   document.getElementById('loading').classList.remove('hidden');
   try {
-    var result = await api.get('/api/v1/' + module + '?limit=50');
+    var result = await api.get('/api/v1/' + module + '?limit=' + modulePageSize + '&offset=0');
     currentRows = result.data || [];
     dashboardPreviewRows[module] = currentRows.slice(0, 3);
-    moduleCounts[module] = result.total || currentRows.length;
+    currentModuleTotalRecords = result.total || currentRows.length;
+    moduleCounts[module] = currentModuleTotalRecords;
     document.getElementById('loading').classList.add('hidden');
     applyCurrentView();
   } catch (e) {
@@ -1117,6 +1502,36 @@ async function selectModule(module) {
     setMainState('empty');
     log('error', 'selectModule error ' + e);
     toast('Failed to load ' + titleize(module));
+  }
+}
+
+async function loadMoreRecords() {
+  if (!currentModule || currentModuleLoadingMore || !isPartialModuleLoaded()) return;
+  currentModuleLoadingMore = true;
+  applyCurrentView();
+  try {
+    var offset = loadedRecordCount();
+    var result = await api.get('/api/v1/' + currentModule + '?limit=' + modulePageSize + '&offset=' + offset);
+    var incoming = result.data || [];
+    var seen = {};
+    currentRows.forEach(function(row) {
+      if (row.id) seen[row.id] = true;
+    });
+    incoming.forEach(function(row) {
+      if (!row.id || seen[row.id]) return;
+      currentRows.push(row);
+      seen[row.id] = true;
+    });
+    currentModuleTotalRecords = result.total || Math.max(currentModuleTotalRecords, loadedRecordCount());
+    moduleCounts[currentModule] = currentModuleTotalRecords;
+    dashboardPreviewRows[currentModule] = currentRows.filter(function(row) { return !row.__draft; }).slice(0, 3);
+    renderSidebar();
+  } catch (e) {
+    log('error', 'load more error ' + e);
+    toast('Could not load more records');
+  } finally {
+    currentModuleLoadingMore = false;
+    applyCurrentView();
   }
 }
 
@@ -1144,8 +1559,10 @@ function bindControls() {
   });
 
   document.getElementById('detail-close').addEventListener('click', function() {
+    var restoreRecordId = selectedRecordId;
     closeDetailPane();
     applyCurrentView();
+    focusRecordRow(restoreRecordId);
   });
 
   document.getElementById('global-search').addEventListener('input', function(event) {
@@ -1166,7 +1583,22 @@ function bindControls() {
   });
 
   document.addEventListener('keydown', function(event) {
-    if (event.key === 'Escape') setImportsMenuOpen(false);
+    if (event.key === 'Escape') {
+      if (importsMenuOpen) setImportsMenuOpen(false);
+      if (detailOpen) {
+        var restoreRecordId = selectedRecordId;
+        closeDetailPane();
+        applyCurrentView();
+        focusRecordRow(restoreRecordId);
+      }
+      return;
+    }
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    if (event.target && /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(event.target.tagName || '')) return;
+    var keyboardTarget = event.target && event.target.closest && event.target.closest('[role="button"][data-action]');
+    if (!keyboardTarget) return;
+    event.preventDefault();
+    keyboardTarget.click();
   });
 
   document.addEventListener('input', function(event) {
@@ -1230,6 +1662,12 @@ function handleActionClick(event) {
     case 'change-view':
       changeView(target.getAttribute('data-view'));
       break;
+    case 'select-saved-view':
+      selectSavedView(target.getAttribute('data-view-id'));
+      break;
+    case 'load-more-records':
+      loadMoreRecords();
+      break;
     case 'open-detail':
       openDetail(target.getAttribute('data-module'), target.getAttribute('data-record-id'));
       break;
@@ -1250,6 +1688,9 @@ function handleActionClick(event) {
       break;
     case 'confirm-delete-current':
       confirmDeleteCurrentRecord();
+      break;
+    case 'restore-deleted-record':
+      restoreDeletedRecord();
       break;
     case 'save-note':
       saveRecordNote();
@@ -1449,7 +1890,7 @@ function renderLinkCandidates(rows) {
     var module = row._module || '';
     var meta = getMeta(module);
     return '<button type="button" class="link-candidate" data-action="link-record" data-target-module="' + escapeAttr(module) + '" data-record-id="' + escapeAttr(row.id) + '">' +
-      '<span class="search-result-icon">' + escapeHtml(meta.icon) + '</span>' +
+      renderModuleIcon(module, 'search-result-icon') +
       '<span class="search-result-copy"><span class="search-result-title">' + escapeHtml(getRecordLabel(module, row)) + '</span><span class="search-result-subtitle">' + escapeHtml(meta.title + ' · ' + (getRecordSubtitle(module, row) || meta.subtitle)) + '</span></span>' +
       '</button>';
   }).join('');
@@ -1687,17 +2128,10 @@ async function undoSuiteCrmImport() {
 
 async function exportWorkspace() {
   try {
-    var bundle = await api.get('/api/v1/export');
-    var blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
-    var url = URL.createObjectURL(blob);
-    var anchor = document.createElement('a');
+    var archive = await fetchArchiveExport();
+    var blob = new Blob([archive], { type: archiveContentType });
     var stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    anchor.href = url;
-    anchor.download = 'ironcrm-' + stamp + '.ironcrm.json';
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, 'white-warren-' + stamp + '.ironcrm');
     toast('Export ready');
   } catch (e) {
     toast('Export failed: ' + e.message);
@@ -1714,39 +2148,48 @@ function restoreWorkspace() {
     var reader = new FileReader();
     reader.onload = async function() {
       try {
-        var bundle = JSON.parse(String(reader.result || '{}'));
-        var summary = previewBundleSummary(bundle);
-        if (!summary.valid) {
-          toast(summary.message);
-          return;
+        var bytes = toUint8Array(reader.result);
+        var restoreSummary;
+        if (isJsonFile(file)) {
+          var text = new TextDecoder().decode(bytes);
+          var bundle = JSON.parse(text || '{}');
+          var summary = previewBundleSummary(bundle);
+          if (!summary.valid) {
+            toast(summary.message);
+            return;
+          }
+          var okJson = confirm('Restore this White Warren JSON bundle?\\n\\n' +
+            summary.records + ' records\\n' +
+            summary.links + ' links\\n' +
+            summary.activities + ' activities\\n\\n' +
+            'Existing records with the same IDs will be updated.');
+          if (!okJson) return;
+          restoreSummary = await api.post('/api/v1/restore', bundle);
+        } else {
+          var okArchive = confirm('Restore this White Warren archive?\\n\\nExisting records with the same IDs will be updated.');
+          if (!okArchive) return;
+          restoreSummary = await restoreArchiveBytes(bytes);
         }
-        var ok = confirm('Restore this IronCRM bundle?\\n\\n' +
-          summary.records + ' records\\n' +
-          summary.links + ' links\\n' +
-          summary.activities + ' activities\\n\\n' +
-          'Existing records with the same IDs will be updated.');
-        if (!ok) return;
-        var restoreSummary = await api.post('/api/v1/restore', bundle);
         toast('Restored ' + (restoreSummary.records || 0) + ' records');
         await reloadWorkspace();
       } catch (e) {
         toast('Restore failed: ' + e.message);
       }
     };
-    reader.readAsText(file);
+    reader.readAsArrayBuffer(file);
   });
   input.click();
 }
 
 function previewBundleSummary(bundle) {
   if (!bundle || bundle.kind !== 'ironcrm.workspace' || bundle.version !== 1) {
-    return { valid: false, message: 'Not an IronCRM workspace bundle' };
+    return { valid: false, message: 'Not a White Warren workspace bundle' };
   }
   return {
     valid: true,
-    records: Array.isArray(bundle.records) ? bundle.records.length : 0,
-    links: Array.isArray(bundle.record_links) ? bundle.record_links.length : 0,
-    activities: Array.isArray(bundle.activities) ? bundle.activities.length : 0
+    records: bundle.manifest && bundle.manifest.counts ? bundle.manifest.counts.records : (Array.isArray(bundle.records) ? bundle.records.length : 0),
+    links: bundle.manifest && bundle.manifest.counts ? bundle.manifest.counts.record_links : (Array.isArray(bundle.record_links) ? bundle.record_links.length : 0),
+    activities: bundle.manifest && bundle.manifest.counts ? bundle.manifest.counts.activities : (Array.isArray(bundle.activities) ? bundle.activities.length : 0)
   };
 }
 
@@ -1780,9 +2223,11 @@ async function confirmDeleteCurrentRecord() {
   }
   var module = currentDetailModule;
   var id = currentDetailRecord.id;
+  var label = getRecordLabel(module, currentDetailRecord);
   try {
     await api.del('/api/v1/' + module + '/' + id);
-    toast('Deleted');
+    lastDeletedRecord = { module: module, id: id, label: label };
+    toast('Deleted ' + label, { label: 'Undo', action: 'restore-deleted-record' });
     pendingDeleteKey = null;
     closeDetailPane();
     if (currentModule === module) {
@@ -1795,6 +2240,30 @@ async function confirmDeleteCurrentRecord() {
     }
   } catch (e) {
     toast('Error: ' + e.message);
+  }
+}
+
+async function restoreDeletedRecord() {
+  if (!lastDeletedRecord || !lastDeletedRecord.module || !lastDeletedRecord.id) {
+    toast('No deleted record to restore');
+    return;
+  }
+  var deleted = lastDeletedRecord;
+  try {
+    await api.post('/api/v1/' + deleted.module + '/' + deleted.id + '/restore', {});
+    lastDeletedRecord = null;
+    if (currentModule === deleted.module) {
+      await refreshCurrentModule();
+    } else if (currentModule) {
+      await selectModule(currentModule);
+    } else {
+      await refreshDashboardPreviewModule(deleted.module);
+      setMainState('dashboard');
+    }
+    await openDetail(deleted.module, deleted.id);
+    toast('Restored');
+  } catch (e) {
+    toast('Restore failed: ' + e.message);
   }
 }
 
@@ -1837,11 +2306,7 @@ function renderInlineEditor(module, record, isNew) {
   currentDetailRecord = record;
   currentDetailMode = isNew ? 'new' : 'edit';
   selectedRecordId = record.id || null;
-  detailOpen = true;
-  document.getElementById('detail-pane').classList.remove('hidden');
-  document.getElementById('detail-empty').classList.add('hidden');
-  document.getElementById('detail-content').classList.remove('hidden');
-  syncShellState();
+  openDetailPane(true);
 
   document.getElementById('detail-header').innerHTML =
     '<div class="detail-kicker-row"><div class="detail-kicker">' + escapeHtml(meta.title) + '</div><div class="detail-header-actions"><button type="button" class="detail-btn" data-action="cancel-inline">Cancel</button><button type="button" class="detail-btn primary-detail-btn" data-action="save-inline">Save</button></div></div>' +
@@ -1863,10 +2328,12 @@ function collectInlineFields() {
 
 async function refreshCurrentModule() {
   if (!currentModule) return;
-  var result = await api.get('/api/v1/' + currentModule + '?limit=50');
+  var requestedLimit = Math.max(modulePageSize, loadedRecordCount());
+  var result = await api.get('/api/v1/' + currentModule + '?limit=' + requestedLimit + '&offset=0');
   currentRows = result.data || [];
   dashboardPreviewRows[currentModule] = currentRows.slice(0, 3);
-  moduleCounts[currentModule] = result.total || currentRows.length;
+  currentModuleTotalRecords = result.total || currentRows.length;
+  moduleCounts[currentModule] = currentModuleTotalRecords;
   renderSidebar();
   renderToolbar(currentModule);
   applyCurrentView();
@@ -2015,6 +2482,7 @@ window.editCurrentRecord = editCurrentRecord;
 window.deleteCurrentRecord = deleteCurrentRecord;
 window.cancelDeleteRecord = cancelDeleteRecord;
 window.confirmDeleteCurrentRecord = confirmDeleteCurrentRecord;
+window.restoreDeletedRecord = restoreDeletedRecord;
 window.openNewRecordInline = openNewRecordInline;
 window.editDraftRecord = editDraftRecord;
 window.saveInlineEdit = saveInlineEdit;
