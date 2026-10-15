@@ -88,12 +88,18 @@ pose as them:
 
 ## Privacy and safety
 
-- Organizations that serve victims can hide addresses, staff names and intake
-  details, and show only a way to refer someone.
+- **No human names, ever.** Profiles show organizations, not people: no
+  directors, staff, volunteers or contacts by name, even when a registry lists
+  them. Each profile links to the organization's own website for more.
+- We collect from organizations' websites and public records, and keep only the
+  facts a standard or the profile needs. We do not store personal information.
+- Director names from a corporate registry are used only in private, to check
+  that the person claiming a profile can act for the organization. They are
+  never shown.
+- Organizations that serve victims can also hide addresses and intake details,
+  and show only a way to refer someone.
 - We never publish a shelter or office location unless the organization
   chooses to.
-- We do not store personal information from websites beyond what a standard
-  needs.
 - An organization can withdraw at any time. Its results are deleted. We keep
   only that a label was issued or withdrawn, and when.
 - Published standards versions stay public forever.
